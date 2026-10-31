@@ -41,6 +41,7 @@ pub enum Slot {
 pub enum LyricState<'a> {
     Loading,
     Missing,
+    Offline,
     Ready(&'a Lyrics),
 }
 
@@ -239,6 +240,7 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
                 let key = match other {
                     LyricState::Loading => Text::LyricsLoading,
                     LyricState::Ready(l) if l.instrumental => Text::Instrumental,
+                    LyricState::Offline => Text::LyricsOffline,
                     _ => Text::LyricsMissing,
                 };
                 let style = TextStyle::new(13.0, Weight::Medium, ui.pal.text_dim).centered();

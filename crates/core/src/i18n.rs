@@ -84,6 +84,7 @@ pub enum Text {
     Shortcut,
     LyricsLoading,
     LyricsMissing,
+    LyricsOffline,
     Instrumental,
 }
 
@@ -206,8 +207,8 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, MediaControls) => "Media controls",
         (Lang::Id, Lyrics) => "Lirik tersinkron",
         (Lang::En, Lyrics) => "Synced lyrics",
-        (Lang::Id, LyricsDesc) => "Dari lrclib.net; judul dan artis lagu dikirim ke sana.",
-        (Lang::En, LyricsDesc) => "From lrclib.net; the song title and artist are sent there.",
+        (Lang::Id, LyricsDesc) => "Dari lrclib.net, cadangan lyrics.ovh; judul dan artis lagu dikirim ke sana.",
+        (Lang::En, LyricsDesc) => "From lrclib.net, fallback lyrics.ovh; the song title and artist are sent there.",
         (Lang::Id, ScrollVolume) => "Scroll untuk volume",
         (Lang::En, ScrollVolume) => "Scroll for volume",
         (Lang::Id, TimerSound) => "Bunyi saat timer selesai",
@@ -228,6 +229,8 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, LyricsLoading) => "Finding lyrics…",
         (Lang::Id, LyricsMissing) => "Lirik tidak tersedia",
         (Lang::En, LyricsMissing) => "No lyrics found",
+        (Lang::Id, LyricsOffline) => "Layanan lirik tidak dapat dihubungi",
+        (Lang::En, LyricsOffline) => "Lyrics service unreachable",
         (Lang::Id, Instrumental) => "Instrumental",
         (Lang::En, Instrumental) => "Instrumental",
     }

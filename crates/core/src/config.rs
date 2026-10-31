@@ -132,7 +132,7 @@ block = []
 scroll_volume = true
 # Berapa detik media yang dijeda tetap tampil (0–3600).
 paused_linger_seconds = 60
-# Lirik tersinkron dari lrclib.net. Judul, artis, album, dan durasi lagu
+# Lirik tersinkron dari lrclib.net (cadangan: lyrics.ovh). Judul, artis, album, dan durasi lagu
 # dikirim ke layanan itu, jadi pilihan ini mati secara default.
 lyrics = false
 

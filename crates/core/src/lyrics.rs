@@ -321,6 +321,15 @@ fn from_record(r: &Json) -> Option<Lyrics> {
     r.get("plainLyrics").and_then(Json::as_str).map(Lyrics::plain).filter(|l| !l.is_empty())
 }
 
+pub fn parse_ovh(json: &Json) -> Option<Lyrics> {
+    let text = json.get("lyrics").and_then(Json::as_str)?;
+    let body = match text.split_once('\n') {
+        Some((first, rest)) if first.trim_start().starts_with("Paroles de la chanson") => rest,
+        _ => text,
+    };
+    Some(Lyrics::plain(body)).filter(|l| !l.is_empty())
+}
+
 pub fn pick(json: &Json, duration: Ms) -> Option<Lyrics> {
     match json {
         Json::Obj(_) => from_record(json),
@@ -394,6 +403,21 @@ pub fn clean_title(title: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub fn bare_title(title: &str) -> String {
+    let mut out = String::new();
+    let mut rest = title;
+    while let Some(s) = rest.find(['(', '[']) {
+        let close = if rest.as_bytes()[s] == b'(' { ')' } else { ']' };
+        let Some(e) = rest[s..].find(close).map(|e| s + e) else { break };
+        let inner = rest[s + 1..e].trim().to_lowercase();
+        let feat = ["feat", "ft.", "ft ", "with "].iter().any(|p| inner.starts_with(p));
+        out.push_str(if feat { &rest[..s] } else { &rest[..=e] });
+        rest = &rest[e + 1..];
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn clean_artist(artist: &str) -> String {
     let mut a = artist.trim();
     for suffix in [" - Topic", "VEVO", "Official"] {
@@ -414,6 +438,11 @@ pub struct Query {
 
 impl Query {
     pub fn new(title: &str, artist: &str, album: &str, duration: Ms) -> Query {
+        let (artist, album) = match artist.split_once(" \u{2014} ") {
+            Some((a, b)) if album.trim().is_empty() => (a, b),
+            Some((a, _)) => (a, album),
+            None => (artist, album),
+        };
         let mut title = clean_title(title);
         let mut artist = clean_artist(artist);
         if let Some((a, t)) = title.split_once(" - ").map(|(a, t)| (a.trim().to_string(), t.trim().to_string()))
@@ -451,6 +480,10 @@ impl Query {
             p.push_str(&format!("&artist_name={}", encode_component(&self.artist)));
         }
         p
+    }
+
+    pub fn ovh_path(&self) -> Option<String> {
+        (!self.artist.is_empty()).then(|| format!("/v1/{}/{}", encode_component(&self.artist), encode_component(&bare_title(&self.title))))
     }
 }
 
@@ -551,5 +584,29 @@ mod tests {
         let q = Query::new("Hati-Hati di Jalan", "Tulus", "Manusia", 0);
         assert!(q.get_path().ends_with("&album_name=Manusia"));
         assert_eq!(q.search_path(), "/api/search?track_name=Hati-Hati%20di%20Jalan&artist_name=Tulus");
+        assert_eq!(q.ovh_path().as_deref(), Some("/v1/Tulus/Hati-Hati%20di%20Jalan"));
+        assert_eq!(Query::new("Lagu Tanpa Artis", "", "", 0).ovh_path(), None);
+    }
+
+    #[test]
+    fn query_apple_music_dan_feat() {
+        let q = Query::new("Beg U (feat. Jessy Alexa)", "Weird Genius \u{2014} ALBUM.", "", 173_000);
+        assert_eq!((q.artist.as_str(), q.album.as_str()), ("Weird Genius", "ALBUM."));
+        assert_eq!(q.ovh_path().as_deref(), Some("/v1/Weird%20Genius/Beg%20U"));
+        let q = Query::new("Lathi", "Weird Genius \u{2014} Lathi - Single", "Lathi", 0);
+        assert_eq!((q.artist.as_str(), q.album.as_str()), ("Weird Genius", "Lathi"));
+        assert_eq!(bare_title("Song [ft. X] (Live)  (with Y)"), "Song (Live)");
+        assert_eq!(bare_title("Remix (Night Version)"), "Remix (Night Version)");
+        assert_eq!(bare_title("Unclosed (feat. Z"), "Unclosed (feat. Z");
+    }
+
+    #[test]
+    fn cadangan_lyrics_ovh() {
+        let j = parse_json(r#"{"lyrics":"Paroles de la chanson Lathi par Weird Genius\r\nI was born a fool\n\nBroken all the rules"}"#).unwrap();
+        let l = parse_ovh(&j).unwrap();
+        assert!(!l.synced);
+        assert_eq!(l.lines.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(), ["I was born a fool", "Broken all the rules"]);
+        assert_eq!(parse_ovh(&parse_json(r#"{"error":"No lyrics found"}"#).unwrap()), None);
+        assert_eq!(parse_ovh(&parse_json(r#"{"lyrics":"  \n "}"#).unwrap()), None);
     }
 }

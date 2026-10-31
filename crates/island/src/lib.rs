@@ -78,6 +78,7 @@ const TRIM_DELAY_MS: u32 = 4_000;
 const LYRICS_DEBOUNCE_MS: u32 = 350;
 const LYRIC_LEAD_MS: Ms = 180;
 const LYRIC_CACHE: usize = 12;
+const LYRIC_RETRY_MS: Ms = 45_000;
 const CONTENT_DELAY_MS: f32 = 70.0;
 const CONTENT_FADE_MS: f32 = 130.0;
 const RETIRE_FADE_MS: f32 = 80.0;
@@ -163,6 +164,7 @@ struct Pointer {
 enum LyricStatus {
     Loading,
     Missing,
+    Offline(Ms),
     Ready(Lyrics),
 }
 
@@ -603,7 +605,12 @@ impl IslandApp {
     fn ensure_lyrics(&mut self) {
         let Some(snap) = self.snap.as_ref() else { return };
         let track = snap.track_id;
-        if self.lyric.as_ref().is_some_and(|l| l.track == track) {
+        let now = now_ms();
+        let fresh = |l: &LyricSlot| match l.status {
+            LyricStatus::Offline(at) => now < at + LYRIC_RETRY_MS,
+            _ => true,
+        };
+        if self.lyric.as_ref().is_some_and(|l| l.track == track && fresh(l)) {
             return;
         }
         let q = query_of(snap);
@@ -635,8 +642,7 @@ impl IslandApp {
         let proxy = self.proxy.clone();
         let spawned = std::thread::Builder::new().name("notchi-lyrics".into()).stack_size(256 * 1024).spawn(move || {
             let r = net::fetch_lyrics(&q);
-            let failed = r.is_err();
-            proxy.post(Event::Lyrics { track_id: track, lyrics: r.ok().flatten(), failed });
+            proxy.post(Event::Lyrics { track_id: track, lyrics: r.lyrics, failed: r.retry });
         });
         match spawned {
             Ok(_) => self.lyric_inflight = Some((track, key)),
@@ -656,6 +662,7 @@ impl IslandApp {
         if self.lyric.as_ref().is_some_and(|l| l.track == t) {
             let status = match lyrics {
                 Some(l) => LyricStatus::Ready(l),
+                None if failed => LyricStatus::Offline(now_ms()),
                 None => LyricStatus::Missing,
             };
             self.lyric = Some(LyricSlot { track: t, status });
@@ -670,6 +677,7 @@ impl IslandApp {
         Some(match self.lyric.as_ref().filter(|l| Some(l.track) == track).map(|l| &l.status) {
             Some(LyricStatus::Ready(l)) => LyricState::Ready(l),
             Some(LyricStatus::Missing) => LyricState::Missing,
+            Some(LyricStatus::Offline(_)) => LyricState::Offline,
             _ => LyricState::Loading,
         })
     }
@@ -1205,6 +1213,7 @@ impl IslandApp {
             Some(LyricState::Loading) => 1,
             Some(LyricState::Missing) => 2,
             Some(LyricState::Ready(_)) => 3,
+            Some(LyricState::Offline) => 4,
         };
         let key = ViewKey {
             kind,
@@ -1244,11 +1253,6 @@ impl IslandApp {
                 SpringPreset::BOUNCY
             };
             self.morph(shape, preset)?;
-            if revealing && self.cfg.liquid && visible {
-                let at = self.stage_point(Point::new(shape.main.w / 2.0, shape.main.h - 2.0));
-                let base = self.ui.pal.base;
-                self.burst(at, Burst::Drip, &[base, self.ui.accent.with_opacity(0.8)]);
-            }
         }
         if visible != self.visible {
             self.set_visible(visible)?;

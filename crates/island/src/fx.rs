@@ -10,7 +10,6 @@ use crate::ui::Ui;
 pub enum Burst {
     Sparkle,
     Confetti,
-    Drip,
     Pop,
 }
 
@@ -52,7 +51,6 @@ pub fn burst(ui: &Ui, parent: &ContainerVisual, spark: Spark<'_>, proxy: &UiProx
     let (count, life) = match kind {
         Burst::Sparkle => (12, 720.0),
         Burst::Confetti => (20, 1_050.0),
-        Burst::Drip => (5, 620.0),
         Burst::Pop => (8, 480.0),
     };
     let glows: Vec<_> = colors
@@ -62,29 +60,23 @@ pub fn burst(ui: &Ui, parent: &ContainerVisual, spark: Spark<'_>, proxy: &UiProx
         .collect::<Result<_>>()?;
     for i in 0..count {
         let ci = i % colors.len().min(4);
-        let angle = match kind {
-            Burst::Drip => rng.range(0.3, 2.84),
-            _ => (i as f32 / count as f32) * core::f32::consts::TAU + rng.range(-0.3, 0.3),
-        };
+        let angle = (i as f32 / count as f32) * core::f32::consts::TAU + rng.range(-0.3, 0.3);
         let (dist, size) = match kind {
             Burst::Sparkle => (rng.range(18.0, 34.0), rng.range(5.0, 9.0)),
             Burst::Confetti => (rng.range(26.0, 54.0), rng.range(4.0, 7.0)),
-            Burst::Drip => (rng.range(2.0, 6.0), rng.range(4.0, 7.0)),
             Burst::Pop => (rng.range(10.0, 18.0), rng.range(4.0, 6.0)),
         };
         let dx = angle.cos() * dist;
         let dy = match kind {
             Burst::Sparkle | Burst::Pop => angle.sin() * dist,
             Burst::Confetti => -angle.sin().abs().max(0.25) * dist,
-            Burst::Drip => dist,
         };
         let fall = match kind {
             Burst::Confetti => rng.range(28.0, 46.0),
-            Burst::Drip => rng.range(10.0, 18.0),
             Burst::Sparkle => rng.range(4.0, 10.0),
             Burst::Pop => 0.0,
         };
-        let x0 = at.x + if kind == Burst::Drip { rng.range(-1.0, 1.0) * dist * 6.0 } else { 0.0 } - size / 2.0;
+        let x0 = at.x - size / 2.0;
         let y0 = at.y - size / 2.0;
         let v = if kind == Burst::Confetti {
             let r = ui.rounded(&root, Rect::new(0.0, 0.0, size * 0.6, size * 1.3), size * 0.2, colors[ci])?;
@@ -107,7 +99,7 @@ pub fn burst(ui: &Ui, parent: &ContainerVisual, spark: Spark<'_>, proxy: &UiProx
         let life = life * rng.range(0.8, 1.15);
         ui.anim.curve(&v, "Offset.X", &[(0.0, x0), (1.0, x0 + dx)], life, delay, EASE_OUT)?;
         ui.anim.curve(&v, "Offset.Y", &[(0.0, y0), (0.45, y0 + dy), (1.0, y0 + dy + fall)], life, delay, GRAVITY)?;
-        let peak = if kind == Burst::Drip { 1.0 } else { rng.range(0.9, 1.3) };
+        let peak = rng.range(0.9, 1.3);
         ui.anim.curve(&v, "Scale.X", &[(0.0, 0.3), (0.2, peak), (1.0, 0.2)], life, delay, SOFT)?;
         ui.anim.curve(&v, "Scale.Y", &[(0.0, 0.3), (0.2, peak), (1.0, 0.2)], life, delay, SOFT)?;
         ui.anim.curve(&v, "Opacity", &[(0.0, 1.0), (0.65, 1.0), (1.0, 0.0)], life, delay, SOFT)?;

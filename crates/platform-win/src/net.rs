@@ -12,6 +12,7 @@ use windows::Win32::Foundation::{E_FAIL, E_OUTOFMEMORY};
 use windows_core::{Error, HSTRING, PCWSTR, Result};
 
 pub const LYRICS_HOST: &str = "lrclib.net";
+pub const LYRICS_FALLBACK_HOST: &str = "api.lyrics.ovh";
 
 struct Handle(*mut c_void);
 
@@ -96,26 +97,45 @@ pub fn https_get(host: &str, path: &str, max_bytes: usize) -> Result<Response> {
     }
 }
 
-fn lyrics_from(path: &str, duration: notchi_core::Ms) -> Result<Option<Lyrics>> {
-    let r = https_get(LYRICS_HOST, path, lyrics::MAX_RESPONSE_BYTES)?;
+#[derive(Debug, Clone, Default)]
+pub struct LyricsFetch {
+    pub lyrics: Option<Lyrics>,
+    pub retry: bool,
+}
+
+fn json_from(host: &str, path: &str) -> Result<Option<lyrics::Json>> {
+    let r = https_get(host, path, lyrics::MAX_RESPONSE_BYTES)?;
     match r.status {
-        200 => {
-            let text = String::from_utf8_lossy(&r.body);
-            Ok(lyrics::parse_json(&text).and_then(|j| lyrics::pick(&j, duration)))
-        }
+        200 => Ok(lyrics::parse_json(&String::from_utf8_lossy(&r.body))),
         404 => Ok(None),
-        status => Err(Error::new(E_FAIL, format!("{LYRICS_HOST} HTTP {status}"))),
+        status => Err(Error::new(E_FAIL, format!("{host} HTTP {status}"))),
     }
 }
 
-pub fn fetch_lyrics(q: &Query) -> Result<Option<Lyrics>> {
-    if !q.is_usable() {
-        return Ok(None);
-    }
+fn lrclib(q: &Query) -> Result<Option<Lyrics>> {
+    let pick = |path: String| -> Result<Option<Lyrics>> { Ok(json_from(LYRICS_HOST, &path)?.and_then(|j| lyrics::pick(&j, q.duration))) };
     if !q.artist.is_empty()
-        && let Some(l) = lyrics_from(&q.get_path(), q.duration)?
+        && let Some(l) = pick(q.get_path())?
     {
         return Ok(Some(l));
     }
-    lyrics_from(&q.search_path(), q.duration)
+    pick(q.search_path())
+}
+
+fn lyrics_ovh(q: &Query) -> Result<Option<Lyrics>> {
+    let Some(path) = q.ovh_path() else { return Ok(None) };
+    Ok(json_from(LYRICS_FALLBACK_HOST, &path)?.and_then(|j| lyrics::parse_ovh(&j)))
+}
+
+pub fn fetch_lyrics(q: &Query) -> LyricsFetch {
+    if !q.is_usable() {
+        return LyricsFetch::default();
+    }
+    let primary = lrclib(q);
+    if let Ok(Some(l)) = primary {
+        return LyricsFetch { lyrics: Some(l), retry: false };
+    }
+    let fallback = lyrics_ovh(q);
+    let retry = primary.is_err() || fallback.is_err();
+    LyricsFetch { lyrics: fallback.ok().flatten(), retry }
 }

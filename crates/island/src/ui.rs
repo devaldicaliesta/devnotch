@@ -245,7 +245,6 @@ impl Pill {
         visual.SetAnchorPoint(v2(0.5, 0.0))?;
         let host: CompositionObject = visual.cast()?;
         let refs = [("host", &host)];
-        ui.anim.bind(&visual, "CenterPoint", "Vector3(host.Size.X / 2, 0, 0)", &refs)?;
 
         let r = format!("Min(Min(host.Size.Y / 2, host.Size.X / 2), {MAX_RADIUS})");
         let offset = format!("Vector2(0, -{r})");
