@@ -1,0 +1,25 @@
+[package]
+name = "notchi"
+description = "Notchi: Island interaktif bergaya macOS untuk Windows 11"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "Notchi"
+path = "src/main.rs"
+
+[dependencies]
+notchi-core.workspace = true
+notchi-platform-win.workspace = true
+notchi-island.workspace = true
+
+[build-dependencies]
+embed-manifest = "1.5"
+
+[lints]
+workspace = true

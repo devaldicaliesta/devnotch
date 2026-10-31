@@ -1,0 +1,16 @@
+[package]
+name = "notchi-island"
+description = "Fitur Island Notchi: pil interaktif, media, timer, daya, maskot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+notchi-core.workspace = true
+notchi-platform-win.workspace = true
+
+[lints]
+workspace = true

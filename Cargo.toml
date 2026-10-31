@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/platform-win", "crates/island", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["devaldicaliesta"]
+repository = "https://github.com/devaldicaliesta/devnotch"
+
+[workspace.dependencies]
+notchi-core = { path = "crates/core" }
+notchi-platform-win = { path = "crates/platform-win" }
+notchi-island = { path = "crates/island" }
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+# PRD §6.4: profil rilis hemat ukuran; `core` dioptimalkan penuh.
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.release.package.notchi-core]
+opt-level = 3
