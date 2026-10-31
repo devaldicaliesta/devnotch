@@ -43,12 +43,18 @@ impl CompositionHost {
             Some(unsafe { CreateDispatcherQueueController(options)? })
         };
         let compositor = Compositor::new()?;
+        let mut host = Self::attach(&compositor, window)?;
+        host._controller = controller;
+        Ok(host)
+    }
+
+    pub fn attach(compositor: &Compositor, window: &Window) -> Result<Self> {
         let interop: ICompositorDesktopInterop = compositor.cast()?;
         let target = unsafe { interop.CreateDesktopWindowTarget(HWND(window.raw_hwnd() as *mut _), true)? };
         let root = compositor.CreateContainerVisual()?;
         root.SetRelativeSizeAdjustment(Vector2::new(1.0, 1.0))?;
         target.SetRoot(&root)?;
-        Ok(Self { _controller: controller, compositor, _target: target, root })
+        Ok(Self { _controller: None, compositor: compositor.clone(), _target: target, root })
     }
 }
 
@@ -154,9 +160,26 @@ impl Animator {
         obj.StartAnimation(&HSTRING::from(prop), &anim)
     }
 
+    pub fn curve(&self, target: &impl Interface, prop: &str, frames: &[(f32, f32)], ms: f32, delay_ms: f32, bezier: [f32; 4]) -> Result<()> {
+        if self.reduce_motion {
+            return Ok(());
+        }
+        let obj: CompositionObject = target.cast()?;
+        let anim = self.keyframes_with(frames, ms, bezier)?;
+        if delay_ms > 0.0 {
+            anim.SetDelayTime(ts_ms(delay_ms))?;
+            anim.SetDelayBehavior(AnimationDelayBehavior::SetInitialValueBeforeDelay)?;
+        }
+        obj.StartAnimation(&HSTRING::from(prop), &anim)
+    }
+
     fn keyframes(&self, frames: &[(f32, f32)], ms: f32) -> Result<ScalarKeyFrameAnimation> {
+        self.keyframes_with(frames, ms, [0.42, 0.0, 0.58, 1.0])
+    }
+
+    fn keyframes_with(&self, frames: &[(f32, f32)], ms: f32, b: [f32; 4]) -> Result<ScalarKeyFrameAnimation> {
         let anim = self.compositor.CreateScalarKeyFrameAnimation()?;
-        let ease = self.compositor.CreateCubicBezierEasingFunction(v2(0.42, 0.0), v2(0.58, 1.0))?;
+        let ease = self.compositor.CreateCubicBezierEasingFunction(v2(b[0], b[1]), v2(b[2], b[3]))?;
         for &(p, v) in frames {
             anim.InsertKeyFrameWithEasingFunction(p.clamp(0.0, 1.0), v, &ease)?;
         }

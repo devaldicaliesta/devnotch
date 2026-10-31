@@ -162,18 +162,18 @@ Nilai warna adalah usulan awal yang harus lulus kontras WCAG AA (4,5:1) di atas 
 
 ## 3. Fitur Island (pil interaktif di tengah atas layar)
 
-Island adalah jendela kecil berbentuk pil, selalu di atas, yang berubah ukuran mengikuti aktivitas live yang sedang berjalan. Di iPhone fitur ini bernama Dynamic Island; di Mac, Tahoe menampilkan Live Activities dari iPhone di menu bar ([MacStories](https://www.macstories.net/news/macos-tahoe-the-macstories-overview/)), sehingga Island di sini adalah gabungan keduanya untuk Windows. Karena PC tidak punya notch, ada tiga mode tampil: **Selalu tampil** (default), **Hanya saat ada aktivitas**, dan **Muncul saat hover**. Pada Fase 1 Island berjalan sebagai overlay tanpa menu bar.
+Island adalah jendela kecil berbentuk pil, selalu di atas, yang berubah ukuran mengikuti aktivitas live yang sedang berjalan. Di iPhone fitur ini bernama Dynamic Island; di Mac, Tahoe menampilkan Live Activities dari iPhone di menu bar ([MacStories](https://www.macstories.net/news/macos-tahoe-the-macstories-overview/)), sehingga Island di sini adalah gabungan keduanya untuk Windows. Karena PC tidak punya notch, perilakunya dapat dipilih (`island.behavior`, juga di jendela Pengaturan dan menu klik kanan): **Otomatis** (`autohide`, default), **Menempel** (`sticky`, selalu tampil), dan **Sembunyi** (`hide`, hanya muncul saat ada aktivitas atau alert). Pada Fase 1 Island berjalan sebagai overlay tanpa menu bar.
 
-Island **menempel di tepi atas layar** seperti notch: sisi atasnya rata dengan tepi layar, sudut bawahnya membulat, dan di pertemuan dengan tepi ada lengkung cekung kecil (10 dp) sehingga pil tampak seperti cairan yang menetes dari tepi. Dengan **sembunyi otomatis** (`island.autohide`, default aktif), Island masuk ke tepi atas dan hanya menyisakan bibir 4 dp; ia turun saat kursor masuk ke zona tipis (10 dp) di sekitar notch dan naik lagi 300 ms setelah kursor pergi. Alert, kartu yang terbuka, dan aktivitas baru (menyembul 2,5 detik) selalu tampil penuh. Saat tersembunyi, isi pil dilepas sehingga tidak ada animasi maupun timer yang berjalan.
+Island **menempel di tepi atas layar** seperti notch: sisi atasnya rata dengan tepi layar, sudut bawahnya membulat, dan di pertemuan dengan tepi ada lengkung cekung kecil (10 dp) sehingga pil tampak seperti cairan yang menetes dari tepi. Pada perilaku **Otomatis**, Island masuk ke tepi atas dan hanya menyisakan bibir 4 dp; ia turun saat kursor masuk ke zona tipis (10 dp) di sekitar notch dan naik lagi 300 ms setelah kursor pergi. Alert, kartu yang terbuka, dan aktivitas baru (menyembul 2,5 detik) selalu tampil penuh. Saat tersembunyi, isi pil dilepas sehingga tidak ada animasi maupun timer yang berjalan.
 
 ### 3.1 State dan ukuran
 
 | State | Kapan muncul | Ukuran awal (dp) | Isi |
 | --- | --- | --- | --- |
-| Idle | Tidak ada aktivitas | 126 × 37 | Pil hitam kosong (atau tersembunyi, sesuai mode) |
+| Idle | Tidak ada aktivitas | 126 × 37 | Pil gelap kosong (atau tersembunyi, sesuai perilaku) |
 | Compact | 1 aktivitas | 160–240 × 37 | Slot kiri (ikon/sampul) dan slot kanan (indikator/waveform) |
 | Minimal | 2 aktivitas | Pil utama + gelembung 37 × 37 | Aktivitas kedua terpisah di sisi kanan |
-| Expanded | Klik, tahan 350 ms, atau alert | 371 × 84–200 | Kartu kontrol penuh |
+| Expanded | Klik, tahan 350 ms, atau alert | 371 × 84–240 | Kartu kontrol penuh (kartu media dengan lirik 240) |
 | Alert | Peristiwa singkat (pengisi daya, perangkat terhubung) | Expanded otomatis 3–5 detik | Kembali ke state sebelumnya |
 
 Angka ukuran adalah titik awal yang meniru proporsi pada iPhone dan dikalibrasi ulang di Fase 1. Perpindahan antar-state memakai morf bentuk (ukuran dan radius berubah mulus), konten lama memudar dengan blur singkat, dan konten baru muncul setelah bentuk hampir selesai, dengan preset gerak *bouncy* (bagian 2.3).
@@ -218,10 +218,11 @@ Alert dan layar penuh dapat menyela state normal mana pun; setelah selesai, Isla
 
 | Aksi | Hasil |
 | --- | --- |
-| Hover pada pil | Pil membesar 1,05× dan menampilkan petunjuk (peek) |
+| Hover pada pil | Pil membesar 1,05× dan menampilkan petunjuk (peek); mata maskot mengikuti kursor, tombol membesar saat disorot dan mengecil saat ditekan |
+| Klik maskot di kartu | Maskot memantul (squash-stretch), tersipu, dan memercikkan partikel |
 | Klik | Expand/collapse |
 | Tahan 350 ms | Expand dengan umpan balik gerak (tanpa haptic di PC) |
-| Klik kanan | Menu: Pengaturan, Sembunyikan 1 jam, Keluar |
+| Klik kanan | Menu: Timer, Stopwatch, Perilaku, Sembunyikan 1 jam, Mulai bersama Windows, Pengaturan, Tentang, Keluar |
 | Geser dua jari / seret horizontal | Ganti ke aktivitas berikutnya atau sebelumnya |
 | Scroll di atas pil | Mengatur volume media |
 | Esc atau klik di luar | Collapse |
@@ -259,7 +260,8 @@ Island menampilkan semua sesi yang terdaftar di kontrol media sistem Windows, se
 - **Kontrol:** tombol play, pause, next, dan previous tampil hanya bila sesi mengaktifkan kemampuan itu; bila tidak, tombol disembunyikan dan tidak menimbulkan galat.
 - **Sampul dan progres:** sampul dari properti media sesi, dibatasi 512 px dan tidak disimpan ke disk; progres dari properti timeline sesi.
 - **Merek:** ikon sumber diambil dari aplikasi atau browser yang bersangkutan lewat shell; Notchi tidak membawa logo YouTube Music atau Apple Music sendiri.
-- **Batas:** sumber yang tidak mengumumkan sesi ke Windows tidak akan muncul; tombol suka dan lirik tidak tersedia karena tidak ada di API.
+- **Lirik (opt-in, mati secara default):** API media Windows tidak menyediakan lirik, jadi lirik diambil dari [LRCLIB](https://lrclib.net) (`/api/get`, lalu `/api/search` sebagai cadangan) lewat WinHTTP: TLS 1.2/1.3, tanpa cookie, batas waktu 5–8 detik, respons maksimum 512 KB, satu thread pendek per lagu setelah jeda 350 ms. Yang dikirim hanya judul, artis, album, dan durasi; hasilnya disimpan di memori (12 lagu terakhir) dan tidak ke disk. Lirik tersinkron (LRC) bergeser per baris mengikuti posisi lagu; lirik polos dibagi rata sepanjang durasi. Saklar ada di Pengaturan dan tombol mikrofon di kartu media (`media.lyrics`).
+- **Batas:** sumber yang tidak mengumumkan sesi ke Windows tidak akan muncul; tombol suka tidak tersedia karena tidak ada di API.
 
 Kriteria penerimaan:
 
@@ -363,8 +365,8 @@ Fase: aplikasi + kalkulator di Fase 4; berkas dan aksi pasca-1.0.
 | Kebutuhan | Keputusan |
 | --- | --- |
 | Format konfigurasi | `config.toml` di `%APPDATA%\Notchi`, divalidasi terhadap skema; nilai tidak valid diganti default, tidak membuat aplikasi crash |
-| Antarmuka pengaturan | Jendela sidebar yang dirender dengan mesin UI yang sama (tanpa framework tambahan); Fase 2. Di Fase 1 cukup file konfigurasi dengan *hot reload* |
-| Tema | Token desain (bagian 2) dapat diganti per pengguna; impor/ekspor file tema |
+| Antarmuka pengaturan | Jendela Pengaturan gelap yang dirender dengan mesin UI yang sama (compositor dan Direct2D yang dibagi dengan Island, tanpa framework tambahan): perilaku Island, efek cairan, layar penuh, gaya, kurangi gerakan, maskot dan warnanya, media, lirik, volume scroll, bunyi timer, bahasa, mulai bersama Windows. Dibuka dari menu klik kanan atau `Notchi.exe --settings`; pilihan lanjutan tetap di `config.toml` dengan *hot reload*. Jendela dan seluruh visualnya dilepas saat ditutup |
+| Tema | Gaya `appearance.style`: **Neumorphism** (default; permukaan gelap timbul/cekung dengan bayangan lembut), **Clay 3D** (tombol bergradien dengan sorotan dalam seperti tanah liat), dan **Klasik** (hitam pekat, datar). Semua gaya memakai palet gelap mendekati hitam agar menyatu dengan tepi layar seperti notch. Animasi partikel (percikan, konfeti saat timer selesai, tetesan saat pil turun dengan efek cairan) berjalan di compositor dan dilewati saat kurangi gerakan aktif. Token desain (bagian 2) dapat diganti per pengguna; impor/ekspor file tema menyusul |
 | Mulai bersama Windows | Kunci `HKCU\...\Run` (pada paket MSIX: startupTask di manifest); tanpa hak admin |
 | Bahasa | Indonesia dan Inggris di v1; string eksternal agar mudah ditambah |
 | Privasi | Setiap sumber data (notifikasi, mikrofon, jaringan) punya saklar sendiri, mati secara default untuk yang sensitif |

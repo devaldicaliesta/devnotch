@@ -2,7 +2,7 @@
 
 Island interaktif, menu bar, dan Dock bergaya macOS untuk Windows 11, ditulis dengan Rust agar ringan.
 
-> **Status:** Island Fase 1 sudah berjalan (Rust). Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
+> **Status:** Island Fase 1 sudah berjalan (Rust): perilaku Otomatis/Menempel/Sembunyi, jendela Pengaturan (`Notchi.exe --settings`), gaya gelap Neumorphism dan Clay 3D, maskot interaktif, partikel, serta lirik tersinkron opsional dari LRCLIB. Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
 
 ## Rencana singkat
 

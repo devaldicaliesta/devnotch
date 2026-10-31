@@ -1,7 +1,8 @@
 use crate::color::Skin;
 use crate::hotkey::Hotkey;
 use crate::i18n::Lang;
-use crate::island::DisplayMode;
+use crate::island::Behavior;
+use crate::theme::Style;
 use toml::{Table, Value};
 
 pub const MAX_CONFIG_BYTES: usize = 256 * 1024;
@@ -16,10 +17,9 @@ pub enum ReduceMotion {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IslandConfig {
-    pub mode: DisplayMode,
+    pub behavior: Behavior,
     pub hotkey: Hotkey,
     pub hide_in_fullscreen: bool,
-    pub autohide: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +35,7 @@ pub struct MediaConfig {
     pub block: Vec<String>,
     pub scroll_volume: bool,
     pub paused_linger_seconds: u32,
+    pub lyrics: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +54,7 @@ pub struct TimerConfig {
 pub struct Config {
     pub language: Lang,
     pub island: IslandConfig,
+    pub style: Style,
     pub mascot: MascotConfig,
     pub media: MediaConfig,
     pub power: PowerConfig,
@@ -69,11 +71,11 @@ impl Default for Config {
         Self {
             language: Lang::Id,
             island: IslandConfig {
-                mode: DisplayMode::Always,
+                behavior: Behavior::Autohide,
                 hotkey: Hotkey::parse(DEFAULT_HOTKEY).expect("hotkey default valid"),
                 hide_in_fullscreen: true,
-                autohide: true,
             },
+            style: Style::Neumorphism,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
             media: MediaConfig {
                 enabled: true,
@@ -81,6 +83,7 @@ impl Default for Config {
                 block: Vec::new(),
                 scroll_volume: true,
                 paused_linger_seconds: 60,
+                lyrics: false,
             },
             power: PowerConfig { enabled: true, low_thresholds: vec![20, 10] },
             timer: TimerConfig { presets_minutes: vec![1, 5, 10, 25], sound: true },
@@ -92,21 +95,27 @@ impl Default for Config {
 }
 
 pub const DEFAULT_TOML: &str = r#"# Pengaturan Notchi. Berkas ini dimuat ulang otomatis setelah disimpan.
+# Sebagian besar pilihan juga bisa diubah di jendela Pengaturan (klik kanan pil).
 # Nilai yang tidak valid diganti default; aplikasi tidak akan crash.
 
 # Bahasa antarmuka: "id" atau "en".
 language = "id"
 
 [island]
-# "always" (selalu tampil), "activity" (hanya saat ada aktivitas), atau "hover".
-mode = "always"
+# Perilaku pil yang menempel di tepi atas layar:
+#   "autohide"  masuk ke tepi dan menyisakan bibir tipis; turun saat kursor
+#               didekatkan ke notch. Alert dan aktivitas baru tetap menyembul.
+#   "sticky"    selalu tampil menempel di tepi atas.
+#   "hide"      tersembunyi; hanya muncul saat ada aktivitas atau alert.
+behavior = "autohide"
 # Buka/tutup Island tanpa mouse.
 hotkey = "Ctrl+Alt+N"
 hide_in_fullscreen = true
-# Pil menempel di tepi atas layar. Dengan autohide, pil masuk ke tepi dan
-# hanya menyisakan bibir tipis; ia turun saat kursor didekatkan ke notch.
-# Alert dan aktivitas baru tetap menyembul sebentar.
-autohide = true
+
+[appearance]
+# "neumorphism" (permukaan lembut timbul), "clay" (tombol 3D seperti tanah liat),
+# atau "classic" (hitam pekat, datar).
+style = "neumorphism"
 
 [mascot]
 enabled = true
@@ -123,6 +132,9 @@ block = []
 scroll_volume = true
 # Berapa detik media yang dijeda tetap tampil (0–3600).
 paused_linger_seconds = 60
+# Lirik tersinkron dari lrclib.net. Judul, artis, album, dan durasi lagu
+# dikirim ke layanan itu, jadi pilihan ini mati secara default.
+lyrics = false
 
 [power]
 enabled = true
@@ -275,15 +287,29 @@ impl<'a> Reader<'a> {
     }
 }
 
+pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
+
 const KNOWN: &[(&str, &[&str])] = &[
-    ("island", &["mode", "hotkey", "hide_in_fullscreen", "autohide", "top_margin"]),
+    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "mode", "autohide", "top_margin"]),
+    ("appearance", &["style"]),
     ("mascot", &["enabled", "skin"]),
-    ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds"]),
+    ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds", "lyrics"]),
     ("power", &["enabled", "low_thresholds"]),
     ("timer", &["presets_minutes", "sound"]),
     ("motion", &["reduce", "liquid"]),
     ("startup", &["launch_at_login"]),
 ];
+
+fn legacy_behavior(r: &mut Reader<'_>, default: Behavior) -> Behavior {
+    let mode = r.parsed("island.mode", None, |s| match s.to_ascii_lowercase().as_str() {
+        "always" => Ok(None),
+        "activity" => Ok(Some(Behavior::Hide)),
+        "hover" => Ok(Some(Behavior::Autohide)),
+        _ => Err("harus \"always\", \"activity\", atau \"hover\"".into()),
+    });
+    let autohide = r.bool("island.autohide", default == Behavior::Autohide);
+    mode.unwrap_or(if autohide { Behavior::Autohide } else { Behavior::Sticky })
+}
 
 fn check_unknown(root: &Table, warnings: &mut Vec<Warning>) {
     for (k, v) in root {
@@ -324,12 +350,18 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let mut r = Reader { root: &root, warnings: Vec::new() };
 
     let language = r.parsed("language", d.language, |s| Lang::from_key(s).ok_or("harus \"id\" atau \"en\"".into()));
-    let mode = r.parsed("island.mode", d.island.mode, |s| {
-        DisplayMode::from_key(s).ok_or("harus \"always\", \"activity\", atau \"hover\"".into())
-    });
+    let behavior = if r.lookup("island.behavior").is_some() {
+        r.parsed("island.behavior", d.island.behavior, |s| {
+            Behavior::from_key(s).ok_or("harus \"autohide\", \"sticky\", atau \"hide\"".into())
+        })
+    } else {
+        legacy_behavior(&mut r, d.island.behavior)
+    };
     let hotkey = r.parsed("island.hotkey", d.island.hotkey, Hotkey::parse);
     let hide_in_fullscreen = r.bool("island.hide_in_fullscreen", d.island.hide_in_fullscreen);
-    let autohide = r.bool("island.autohide", d.island.autohide);
+    let style = r.parsed("appearance.style", d.style, |s| {
+        Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", atau \"classic\"".into())
+    });
 
     let mascot_enabled = r.bool("mascot.enabled", d.mascot.enabled);
     let skin = r.parsed("mascot.skin", d.mascot.skin, |s| Skin::from_key(s).ok_or(format!("varian tidak dikenal: {s:?}")));
@@ -339,6 +371,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let block = r.string_list("media.block", 64);
     let scroll_volume = r.bool("media.scroll_volume", d.media.scroll_volume);
     let linger = r.int("media.paused_linger_seconds", 0, 3600, d.media.paused_linger_seconds as i64) as u32;
+    let lyrics = r.bool("media.lyrics", d.media.lyrics);
 
     let power_enabled = r.bool("power.enabled", d.power.enabled);
     let default_thresholds: Vec<i64> = d.power.low_thresholds.iter().map(|&t| t as i64).collect();
@@ -362,9 +395,10 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
 
     let config = Config {
         language,
-        island: IslandConfig { mode, hotkey, hide_in_fullscreen, autohide },
+        island: IslandConfig { behavior, hotkey, hide_in_fullscreen },
+        style,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
-        media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger },
+        media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger, lyrics },
         power: PowerConfig { enabled: power_enabled, low_thresholds: thresholds.into_iter().map(|t| t as u8).collect() },
         timer: TimerConfig { presets_minutes: presets.into_iter().map(|t| t as u32).collect(), sound },
         reduce_motion,
@@ -374,42 +408,64 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     (config, warnings)
 }
 
+fn is_key_line(line: &str, key: &str) -> bool {
+    let t = line.trim_start();
+    t.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='))
+}
+
+fn section_range(lines: &[String], section: &str) -> Option<(usize, usize)> {
+    let next_header = |from: usize| {
+        lines[from..].iter().position(|l| l.trim_start().starts_with('[')).map_or(lines.len(), |p| from + p)
+    };
+    if section.is_empty() {
+        return Some((0, next_header(0)));
+    }
+    let header = format!("[{section}]");
+    let start = lines.iter().position(|l| l.trim() == header)? + 1;
+    Some((start, next_header(start)))
+}
+
+fn finish(lines: Vec<String>) -> String {
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
+}
+
 pub fn set_value(text: &str, section: &str, key: &str, value: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let header = format!("[{section}]");
-    let is_key_line = |l: &str| {
-        let t = l.trim_start();
-        t.strip_prefix(key).is_some_and(|rest| rest.trim_start().starts_with('='))
-    };
     let new_line = format!("{key} = {value}");
-    match lines.iter().position(|l| l.trim() == header) {
-        Some(start) => {
-            let end = lines[start + 1..]
-                .iter()
-                .position(|l| l.trim_start().starts_with('['))
-                .map_or(lines.len(), |p| start + 1 + p);
-            match (start + 1..end).find(|&i| is_key_line(&lines[i])) {
-                Some(i) => lines[i] = new_line,
-                None => {
-                    let mut at = end;
-                    while at > start + 1 && lines[at - 1].trim().is_empty() {
-                        at -= 1;
-                    }
-                    lines.insert(at, new_line);
+    match section_range(&lines, section) {
+        Some((start, end)) => match (start..end).find(|&i| is_key_line(&lines[i], key)) {
+            Some(i) => lines[i] = new_line,
+            None => {
+                let mut at = end;
+                while at > start && lines[at - 1].trim().is_empty() {
+                    at -= 1;
                 }
+                lines.insert(at, new_line);
             }
-        }
+        },
         None => {
             if lines.last().is_some_and(|l| !l.trim().is_empty()) {
                 lines.push(String::new());
             }
-            lines.push(header);
+            lines.push(format!("[{section}]"));
             lines.push(new_line);
         }
     }
-    let mut out = lines.join("\n");
-    out.push('\n');
-    out
+    finish(lines)
+}
+
+pub fn remove_value(text: &str, section: &str, key: &str) -> String {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let Some((start, end)) = section_range(&lines, section) else { return text.to_string() };
+    let Some(i) = (start..end).find(|&i| is_key_line(&lines[i], key)) else { return text.to_string() };
+    let mut from = i;
+    while from > start && lines[from - 1].trim_start().starts_with('#') {
+        from -= 1;
+    }
+    lines.drain(from..=i);
+    finish(lines)
 }
 
 #[cfg(test)]
@@ -435,28 +491,58 @@ mod tests {
         let text = r#"
 language = "fr"
 [island]
-mode = "hover"
-autohide = 2
+behavior = "sticky"
 hotkey = "Shift+N"
+[appearance]
+style = "kaca"
 [mascot]
 skin = "ungu"
 enabled = "ya"
+[media]
+lyrics = "ya"
 [power]
 low_thresholds = [15, 0, "x"]
 "#;
         let (c, w) = parse(text);
         let d = Config::default();
-        assert_eq!(c.island.mode, DisplayMode::Hover, "nilai valid tetap dipakai");
+        assert_eq!(c.island.behavior, Behavior::Sticky, "nilai valid tetap dipakai");
         assert_eq!(c.language, d.language);
-        assert_eq!(c.island.autohide, d.island.autohide);
+        assert_eq!(c.style, d.style);
         assert_eq!(c.island.hotkey, d.island.hotkey);
         assert_eq!(c.mascot.skin, d.mascot.skin);
         assert_eq!(c.mascot.enabled, d.mascot.enabled);
+        assert!(!c.media.lyrics);
         assert_eq!(c.power.low_thresholds, vec![15]);
         let keys: Vec<&str> = w.iter().map(|w| w.key.as_str()).collect();
-        for k in ["language", "island.autohide", "island.hotkey", "mascot.skin", "mascot.enabled", "power.low_thresholds"] {
+        for k in ["language", "appearance.style", "island.hotkey", "mascot.skin", "mascot.enabled", "media.lyrics", "power.low_thresholds"] {
             assert!(keys.contains(&k), "peringatan untuk {k} hilang: {keys:?}");
         }
+    }
+
+    #[test]
+    fn kunci_lama_dimigrasikan() {
+        let cases = [
+            ("", Behavior::Autohide),
+            ("[island]\nmode = \"always\"\nautohide = true\n", Behavior::Autohide),
+            ("[island]\nmode = \"always\"\nautohide = false\ntop_margin = 8\n", Behavior::Sticky),
+            ("[island]\nmode = \"activity\"\nautohide = true\n", Behavior::Hide),
+            ("[island]\nmode = \"hover\"\nautohide = false\n", Behavior::Autohide),
+            ("[island]\nbehavior = \"hide\"\nmode = \"always\"\nautohide = true\n", Behavior::Hide),
+        ];
+        for (text, want) in cases {
+            let (c, w) = parse(text);
+            assert_eq!(c.island.behavior, want, "{text:?}");
+            assert!(w.is_empty(), "{text:?}: {w:?}");
+        }
+        let (c, w) = parse("[island]\nmode = \"kadang\"\n");
+        assert_eq!(c.island.behavior, Behavior::Autohide);
+        assert_eq!(w.len(), 1);
+    }
+
+    #[test]
+    fn lirik_mati_secara_default() {
+        assert!(!Config::default().media.lyrics);
+        assert!(parse("[media]\nlyrics = true\n").0.media.lyrics);
     }
 
     #[test]
@@ -498,26 +584,52 @@ low_thresholds = [15, 0, "x"]
 
     #[test]
     fn set_value_mengganti_dan_menjaga_komentar() {
-        let out = set_value(DEFAULT_TOML, "island", "mode", "\"hover\"");
-        assert!(out.contains("mode = \"hover\""));
-        assert!(out.contains("# \"always\" (selalu tampil)"));
+        let out = set_value(DEFAULT_TOML, "island", "behavior", "\"hide\"");
+        assert!(out.contains("behavior = \"hide\""));
+        assert!(out.contains("#   \"sticky\"    selalu tampil"));
         let (c, w) = parse(&out);
         assert!(w.is_empty());
-        assert_eq!(c.island.mode, DisplayMode::Hover);
+        assert_eq!(c.island.behavior, Behavior::Hide);
         let out = set_value(&out, "startup", "launch_at_login", "true");
         let (c, _) = parse(&out);
         assert!(c.launch_at_login);
-        assert_eq!(c.island.mode, DisplayMode::Hover);
+        assert_eq!(c.island.behavior, Behavior::Hide);
     }
 
     #[test]
     fn set_value_menambah_kunci_dan_bagian() {
-        let out = set_value("[island]\nmode = \"always\"\n\n[media]\nenabled = true\n", "island", "autohide", "false");
+        let out = set_value("[island]\nbehavior = \"sticky\"\n\n[media]\nenabled = true\n", "island", "hide_in_fullscreen", "false");
         let (c, w) = parse(&out);
         assert!(w.is_empty(), "{w:?}");
-        assert!(!c.island.autohide);
-        assert!(out.find("autohide").unwrap() < out.find("[media]").unwrap());
+        assert!(!c.island.hide_in_fullscreen);
+        assert!(out.find("hide_in_fullscreen").unwrap() < out.find("[media]").unwrap());
         let out = set_value("", "startup", "launch_at_login", "true");
         assert!(parse(&out).0.launch_at_login);
+    }
+
+    #[test]
+    fn set_value_kunci_tingkat_atas() {
+        let out = set_value(DEFAULT_TOML, "", "language", "\"en\"");
+        assert_eq!(parse(&out).0.language, Lang::En);
+        assert_eq!(out.matches("language =").count(), 1);
+        let out = set_value("# hanya komentar\n\n[island]\nbehavior = \"hide\"\n", "", "language", "\"en\"");
+        assert!(out.starts_with("# hanya komentar\nlanguage = \"en\"\n"), "{out}");
+        assert_eq!(parse(&out).0.island.behavior, Behavior::Hide);
+    }
+
+    #[test]
+    fn remove_value_membuang_kunci_dan_komentarnya() {
+        let old = "[island]\n# mode lama\nmode = \"always\"\n# Buka/tutup\nhotkey = \"Ctrl+Alt+N\"\n# a\n# b\nautohide = true\ntop_margin = 8\n\n[media]\n# biarkan\nenabled = true\n";
+        let mut out = old.to_string();
+        for k in LEGACY_ISLAND_KEYS {
+            out = remove_value(&out, "island", k);
+        }
+        let out = set_value(&out, "island", "behavior", "\"autohide\"");
+        assert_eq!(
+            out,
+            "[island]\n# Buka/tutup\nhotkey = \"Ctrl+Alt+N\"\nbehavior = \"autohide\"\n\n[media]\n# biarkan\nenabled = true\n"
+        );
+        assert_eq!(remove_value(&out, "power", "enabled"), out);
+        assert_eq!(remove_value(&out, "media", "allow"), out);
     }
 }

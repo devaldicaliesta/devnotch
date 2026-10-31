@@ -2,23 +2,26 @@ use crate::Ms;
 use crate::activity::Priority;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DisplayMode {
-    Always,
+pub enum Behavior {
     #[default]
-    ActivityOnly,
-    Hover,
+    Autohide,
+    Sticky,
+    Hide,
 }
 
-impl DisplayMode {
-    pub const ALL: [DisplayMode; 3] =
-        [DisplayMode::Always, DisplayMode::ActivityOnly, DisplayMode::Hover];
+impl Behavior {
+    pub const ALL: [Behavior; 3] = [Behavior::Autohide, Behavior::Sticky, Behavior::Hide];
 
     pub fn key(self) -> &'static str {
         match self {
-            DisplayMode::Always => "always",
-            DisplayMode::ActivityOnly => "activity",
-            DisplayMode::Hover => "hover",
+            Behavior::Autohide => "autohide",
+            Behavior::Sticky => "sticky",
+            Behavior::Hide => "hide",
         }
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|b| *b == self).unwrap_or(0)
     }
 
     pub fn from_key(key: &str) -> Option<Self> {
@@ -75,38 +78,40 @@ pub enum Presentation {
 
 #[derive(Debug, Clone)]
 pub struct Island {
-    mode: DisplayMode,
+    behavior: Behavior,
     expanded: bool,
     activity_count: usize,
     alert: Option<ActiveAlert>,
     fullscreen: bool,
     hover: bool,
     snoozed_until: Option<Ms>,
-    autohide: bool,
     peek_until: Option<Ms>,
 }
 
 impl Island {
-    pub fn new(mode: DisplayMode) -> Self {
+    pub fn new(behavior: Behavior) -> Self {
         Self {
-            mode,
+            behavior,
             expanded: false,
             activity_count: 0,
             alert: None,
             fullscreen: false,
             hover: false,
             snoozed_until: None,
-            autohide: false,
             peek_until: None,
         }
     }
 
-    pub fn set_autohide(&mut self, on: bool) {
-        self.autohide = on;
+    pub fn behavior(&self) -> Behavior {
+        self.behavior
+    }
+
+    pub fn set_behavior(&mut self, behavior: Behavior) {
+        self.behavior = behavior;
     }
 
     pub fn autohide(&self) -> bool {
-        self.autohide
+        self.behavior == Behavior::Autohide
     }
 
     pub fn peek(&mut self, until: Ms) {
@@ -114,18 +119,10 @@ impl Island {
     }
 
     pub fn is_retracted(&self, now: Ms) -> bool {
-        if !self.autohide || self.hover || self.peek_until.is_some_and(|t| now < t) {
+        if !self.autohide() || self.hover || self.peek_until.is_some_and(|t| now < t) {
             return false;
         }
         matches!(self.presentation(now), Presentation::Idle | Presentation::Compact | Presentation::Minimal)
-    }
-
-    pub fn mode(&self) -> DisplayMode {
-        self.mode
-    }
-
-    pub fn set_mode(&mut self, mode: DisplayMode) {
-        self.mode = mode;
     }
 
     pub fn is_expanded(&self) -> bool {
@@ -144,11 +141,9 @@ impl Island {
             return Presentation::Expanded;
         }
         match self.activity_count {
-            0 => match self.mode {
-                DisplayMode::Always => Presentation::Idle,
-                DisplayMode::ActivityOnly => Presentation::Hidden,
-                DisplayMode::Hover if self.hover => Presentation::Idle,
-                DisplayMode::Hover => Presentation::Hidden,
+            0 => match self.behavior {
+                Behavior::Autohide | Behavior::Sticky => Presentation::Idle,
+                Behavior::Hide => Presentation::Hidden,
             },
             1 => Presentation::Compact,
             _ => Presentation::Minimal,
@@ -263,20 +258,20 @@ mod tests {
     }
 
     #[test]
-    fn idle_mengikuti_mode() {
-        let mut i = Island::new(DisplayMode::Always);
+    fn idle_mengikuti_perilaku() {
+        let mut i = Island::new(Behavior::Sticky);
         assert_eq!(i.presentation(0), Presentation::Idle);
-        i.set_mode(DisplayMode::ActivityOnly);
-        assert_eq!(i.presentation(0), Presentation::Hidden);
-        i.set_mode(DisplayMode::Hover);
+        i.set_behavior(Behavior::Autohide);
+        assert_eq!(i.presentation(0), Presentation::Idle);
+        i.set_behavior(Behavior::Hide);
         assert_eq!(i.presentation(0), Presentation::Hidden);
         i.set_hover(true);
-        assert_eq!(i.presentation(0), Presentation::Idle);
+        assert_eq!(i.presentation(0), Presentation::Hidden, "hide tidak muncul hanya karena kursor");
     }
 
     #[test]
     fn jumlah_aktivitas_menentukan_bentuk() {
-        let mut i = Island::new(DisplayMode::ActivityOnly);
+        let mut i = Island::new(Behavior::Hide);
         i.set_activity_count(1);
         assert_eq!(i.presentation(0), Presentation::Compact);
         i.set_activity_count(2);
@@ -289,7 +284,7 @@ mod tests {
 
     #[test]
     fn klik_expand_dan_collapse() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         i.set_activity_count(1);
         i.click(0);
         assert_eq!(i.presentation(0), Presentation::Expanded);
@@ -303,7 +298,7 @@ mod tests {
 
     #[test]
     fn alert_menyela_lalu_kembali_ke_state_semula() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         i.set_activity_count(1);
         i.click(0);
         assert!(i.push_alert(charging(), 1_000));
@@ -315,7 +310,7 @@ mod tests {
 
     #[test]
     fn alert_prioritas_rendah_tidak_menimpa() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         assert!(i.push_alert(AlertKind::LowBattery { percent: 10, critical: true }, 0));
         assert!(!i.push_alert(AlertKind::Volume { level: 30, muted: false }, 100));
         assert!(i.push_alert(charging(), 200));
@@ -324,7 +319,7 @@ mod tests {
 
     #[test]
     fn klik_alert_membuka_kartu() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         i.push_alert(AlertKind::TimerDone, 0);
         i.click(10);
         assert_eq!(i.presentation(10), Presentation::Expanded);
@@ -332,7 +327,7 @@ mod tests {
 
     #[test]
     fn layar_penuh_menyembunyikan_dan_kembali() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         i.set_activity_count(1);
         i.set_fullscreen(true);
         assert_eq!(i.presentation(0), Presentation::Hidden);
@@ -345,7 +340,7 @@ mod tests {
 
     #[test]
     fn snooze_satu_jam() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         i.snooze(3_600_000);
         assert_eq!(i.presentation(10), Presentation::Hidden);
         assert_eq!(i.next_deadline(), Some(3_600_000));
@@ -358,10 +353,10 @@ mod tests {
 
     #[test]
     fn sembunyi_otomatis_ke_tepi_atas() {
-        let mut i = Island::new(DisplayMode::Always);
+        let mut i = Island::new(Behavior::Sticky);
         i.set_activity_count(1);
-        assert!(!i.is_retracted(0), "tanpa autohide tidak pernah masuk");
-        i.set_autohide(true);
+        assert!(!i.is_retracted(0), "sticky tidak pernah masuk");
+        i.set_behavior(Behavior::Autohide);
         assert!(i.is_retracted(0));
         assert_eq!(i.presentation(0), Presentation::Compact, "isi tetap sama, hanya posisinya");
         i.set_hover(true);
@@ -377,8 +372,7 @@ mod tests {
 
     #[test]
     fn peek_sebentar_lalu_masuk_lagi() {
-        let mut i = Island::new(DisplayMode::Always);
-        i.set_autohide(true);
+        let mut i = Island::new(Behavior::Autohide);
         i.peek(2_500);
         i.peek(1_000);
         assert!(!i.is_retracted(2_000), "peek tidak dipersingkat");
@@ -388,17 +382,24 @@ mod tests {
     }
 
     #[test]
-    fn autohide_tidak_menampilkan_yang_tersembunyi() {
-        let mut i = Island::new(DisplayMode::ActivityOnly);
-        i.set_autohide(true);
+    fn hide_muncul_hanya_saat_aktivitas() {
+        let mut i = Island::new(Behavior::Hide);
         assert_eq!(i.presentation(0), Presentation::Hidden);
         assert!(!i.is_retracted(0), "tidak ada yang perlu disembunyikan");
+        i.set_activity_count(1);
+        assert_eq!(i.presentation(0), Presentation::Compact);
+        assert!(!i.is_retracted(0), "aktivitas tampil penuh, tidak masuk tepi");
+        i.set_activity_count(0);
+        i.push_alert(charging(), 0);
+        assert_eq!(i.presentation(10), Presentation::Alert(charging()));
     }
 
     #[test]
-    fn kunci_mode() {
-        assert_eq!(DisplayMode::from_key("HOVER"), Some(DisplayMode::Hover));
-        assert_eq!(DisplayMode::from_key("activity"), Some(DisplayMode::ActivityOnly));
-        assert_eq!(DisplayMode::from_key("kadang"), None);
+    fn kunci_perilaku() {
+        assert_eq!(Behavior::from_key("STICKY"), Some(Behavior::Sticky));
+        assert_eq!(Behavior::from_key("hide"), Some(Behavior::Hide));
+        assert_eq!(Behavior::from_key("kadang"), None);
+        assert_eq!(Behavior::default(), Behavior::Autohide);
+        assert_eq!(Behavior::Hide.index(), 2);
     }
 }

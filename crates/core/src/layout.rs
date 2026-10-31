@@ -9,7 +9,7 @@ pub const BUBBLE: Size = Size::new(37.0, 37.0);
 pub const BUBBLE_GAP: f32 = 8.0;
 pub const EXPANDED_W: f32 = 371.0;
 pub const EXPANDED_MIN_H: f32 = 84.0;
-pub const EXPANDED_MAX_H: f32 = 200.0;
+pub const EXPANDED_MAX_H: f32 = 240.0;
 pub const HUD: Size = Size::new(200.0, 37.0);
 pub const HOVER_SCALE: f32 = 1.05;
 pub const MAX_RADIUS: f32 = 40.0;
@@ -20,6 +20,7 @@ pub const PAD: f32 = 18.0;
 pub enum Card {
     Home,
     Media,
+    Lyrics,
     Timer,
     Stopwatch,
 }
@@ -29,6 +30,7 @@ impl Card {
         let h: f32 = match self {
             Card::Home => 132.0,
             Card::Media => 168.0,
+            Card::Lyrics => 240.0,
             Card::Timer | Card::Stopwatch => 112.0,
         };
         h.clamp(EXPANDED_MIN_H, EXPANDED_MAX_H)
@@ -127,6 +129,8 @@ pub enum Button {
     StopwatchStop,
     Preset(u8),
     StartStopwatch,
+    Lyrics,
+    Mascot,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,15 +142,19 @@ pub struct MediaCard {
     pub elapsed: Rect,
     pub progress: Rect,
     pub remaining: Rect,
+    pub lyrics: Option<Rect>,
     pub buttons: Vec<(Button, Rect)>,
 }
 
-pub fn media_card() -> MediaCard {
+pub const LYRICS_H: f32 = 58.0;
+
+pub fn media_card(lyrics: bool) -> MediaCard {
     let w = EXPANDED_W;
     let art = Rect::new(PAD, PAD, 60.0, 60.0);
     let tx = art.x + art.w + 14.0;
-    let tw = w - tx - PAD;
-    let py = art.y + art.h + 18.0;
+    let tw = w - tx - PAD - 34.0;
+    let panel = lyrics.then(|| Rect::new(PAD, art.y + art.h + 14.0, w - 2.0 * PAD, LYRICS_H));
+    let py = panel.map_or(art.y + art.h + 18.0, |p| p.y + p.h + 18.0);
     let by = py + 16.0;
     let cx = w / 2.0;
     let btn = |c: f32| Rect::new(c - 20.0, by, 40.0, 40.0);
@@ -158,10 +166,12 @@ pub fn media_card() -> MediaCard {
         elapsed: Rect::new(PAD, py - 6.0, 40.0, 16.0),
         progress: Rect::new(PAD + 46.0, py, w - 2.0 * (PAD + 46.0), 4.0),
         remaining: Rect::new(w - PAD - 40.0, py - 6.0, 40.0, 16.0),
+        lyrics: panel,
         buttons: vec![
             (Button::Prev, btn(cx - 72.0)),
             (Button::PlayPause, btn(cx)),
             (Button::Next, btn(cx + 72.0)),
+            (Button::Lyrics, Rect::new(w - PAD - 30.0, PAD + 2.0, 30.0, 30.0)),
         ],
     }
 }
@@ -279,7 +289,7 @@ mod tests {
         assert_eq!(IDLE, Size::new(126.0, 37.0));
         assert_eq!(compact_size(10.0).w, 160.0);
         assert_eq!(compact_size(999.0).w, 240.0);
-        for c in [Card::Home, Card::Media, Card::Timer, Card::Stopwatch] {
+        for c in [Card::Home, Card::Media, Card::Lyrics, Card::Timer, Card::Stopwatch] {
             let h = c.height();
             assert!((EXPANDED_MIN_H..=EXPANDED_MAX_H).contains(&h), "{c:?}");
         }
@@ -331,13 +341,22 @@ mod tests {
 
     #[test]
     fn semua_elemen_kartu_di_dalam_kartu() {
-        let mc = media_card();
-        let ms = Card::Media.size();
-        for r in [mc.art, mc.title, mc.subtitle, mc.source, mc.progress, mc.elapsed, mc.remaining] {
-            assert!(inside(ms, &r), "{r:?}");
-        }
-        for (_, r) in &mc.buttons {
-            assert!(inside(ms, r), "{r:?}");
+        for (lyrics, card) in [(false, Card::Media), (true, Card::Lyrics)] {
+            let mc = media_card(lyrics);
+            let ms = card.size();
+            for r in [mc.art, mc.title, mc.subtitle, mc.source, mc.progress, mc.elapsed, mc.remaining] {
+                assert!(inside(ms, &r), "{r:?}");
+            }
+            for (_, r) in &mc.buttons {
+                assert!(inside(ms, r), "{r:?}");
+                assert!(r.y + r.h <= ms.h - 12.0, "{r:?}");
+            }
+            assert_eq!(mc.lyrics.is_some(), lyrics);
+            if let Some(p) = mc.lyrics {
+                assert!(inside(ms, &p) && p.y >= mc.art.y + mc.art.h && p.y + p.h < mc.progress.y);
+            }
+            let (_, lb) = mc.buttons.iter().find(|(b, _)| *b == Button::Lyrics).unwrap();
+            assert!(mc.title.x + mc.title.w <= lb.x, "judul tidak menabrak tombol lirik");
         }
         for sw in [false, true] {
             let tc = timer_card(sw);
@@ -359,7 +378,7 @@ mod tests {
 
     #[test]
     fn tombol_tidak_bertumpuk() {
-        let mc = media_card();
+        let mc = media_card(true);
         for (i, (_, a)) in mc.buttons.iter().enumerate() {
             for (_, b) in mc.buttons.iter().skip(i + 1) {
                 assert!(a.x + a.w <= b.x || b.x + b.w <= a.x);
@@ -369,7 +388,7 @@ mod tests {
 
     #[test]
     fn hit_test_tombol_media() {
-        let mc = media_card();
+        let mc = media_card(false);
         let play = mc.buttons[1].1.center();
         assert_eq!(hit(&mc.buttons, play), Some(Button::PlayPause));
         assert_eq!(hit(&mc.buttons, Point::new(1.0, 1.0)), None);

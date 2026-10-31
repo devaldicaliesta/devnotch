@@ -5,6 +5,7 @@ pub mod comp;
 pub mod fswatch;
 pub mod gfx;
 pub mod media;
+pub mod net;
 pub mod power;
 pub mod shell;
 pub mod sys;

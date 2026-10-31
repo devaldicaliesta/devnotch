@@ -16,6 +16,7 @@ Tanpa opsi, Notchi berjalan di latar belakang. Menjalankannya lagi saat
 sudah berjalan akan membuka Island.
 
 Opsi:
+  --settings       Buka jendela Pengaturan
   --config-path    Tampilkan lokasi config.toml
   --reset-config   Tulis ulang config.toml ke nilai default
   --version        Tampilkan versi
@@ -57,13 +58,14 @@ fn cli(args: &[String]) -> i32 {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if !args.is_empty() {
+    let open_settings = args.first().is_some_and(|a| a == "--settings");
+    if !args.is_empty() && !open_settings {
         std::process::exit(cli(&args));
     }
 
     let _hardening = init_process();
     let Some(_lock) = InstanceLock::acquire(INSTANCE) else {
-        notify_existing_instance();
+        notify_existing_instance(open_settings);
         return;
     };
 
@@ -75,7 +77,7 @@ fn main() {
         }
     };
     let exe = std::env::current_exe().unwrap_or_default();
-    if let Err(e) = IslandApp::install(&mut window, Paths::default_location(), exe) {
+    if let Err(e) = IslandApp::install(&mut window, Paths::default_location(), exe, open_settings) {
         error_box("Notchi", &format!("Gagal memulai Island: {e}\n\nNotchi memerlukan Windows 11 22H2 atau lebih baru."));
         return;
     }

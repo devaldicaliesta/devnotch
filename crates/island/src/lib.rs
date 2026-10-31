@@ -1,23 +1,29 @@
 #![forbid(unsafe_code)]
 
+mod fx;
+mod settings;
 mod ui;
 mod views;
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use notchi_core::Ms;
 use notchi_core::activity::{Activities, ActivityKind};
-use notchi_core::color::ISLAND_BG;
+use notchi_core::color::{self, Color, Skin, TEXT_PRIMARY};
 use notchi_core::config::{self, Config, ReduceMotion, Warning};
 use notchi_core::geom::{Point, Size, scale_for_dpi};
 use notchi_core::i18n::{Lang, Text, t};
 use notchi_core::icon::mascot_rgba;
-use notchi_core::island::{AlertKind, DisplayMode, Island, Presentation};
+use notchi_core::island::{AlertKind, Behavior, Island, Presentation};
 use notchi_core::layout::{self, BUBBLE, BUBBLE_GAP, Button, Card, HOVER_SCALE, Shape};
+use notchi_core::lyrics::{Lyrics, Query};
 use notchi_core::mascot::{Expression, MascotContext, expression_for};
 use notchi_core::media::{Artwork, Controls, MediaPresence, MediaSnapshot, SourceFilter};
 use notchi_core::power::{BatteryMonitor, PowerEvent};
 use notchi_core::spring::SpringPreset;
+use notchi_core::theme::{self, Style};
 use notchi_core::timer::{Countdown, Stopwatch};
 use notchi_platform_win::audio::Volume;
 use notchi_platform_win::comp::{Animator, CompositionHost, ContainerVisual, v2, v3};
@@ -26,10 +32,12 @@ use notchi_platform_win::media::{MediaCommand, MediaService};
 use notchi_platform_win::window::{
     Event, IconImage, MenuItem, MouseButton, OwnedWindow, TrayEvent, TrayIcon, UiProxy, Window, primary_monitor, quit,
 };
-use notchi_platform_win::{Result, fswatch, now_ms, power, shell, sys};
+use notchi_platform_win::{Result, fswatch, net, now_ms, power, shell, sys};
 
+use crate::fx::{Burst, Spark};
+use crate::settings::{Action, Setting, Settings, TAG_PANEL_FX};
 use crate::ui::{Pill, Ui};
-use crate::views::{Dyn, Model, Slot};
+use crate::views::{Dyn, LyricState, Model, Slot};
 
 const T_LONG_PRESS: usize = 1;
 const T_COLLAPSE: usize = 2;
@@ -39,25 +47,27 @@ const T_CONFIG: usize = 5;
 const T_CLOCK: usize = 6;
 const T_RETRACT: usize = 7;
 const T_TRIM: usize = 8;
+const T_LYRICS: usize = 9;
 
 const HK_TOGGLE: i32 = 1;
 const HK_ESC: i32 = 2;
 
 const TAG_MORPH: u64 = 1 << 40;
 const TAG_RETIRE: u64 = 2 << 40;
+const TAG_FX: u64 = 3 << 40;
 const TAG_MASK: u64 = (1 << 40) - 1;
 
 const M_PRESET: u32 = 100;
 const M_STOPWATCH: u32 = 150;
-const M_MODE: u32 = 200;
+const M_BEHAVIOR: u32 = 200;
 const M_HIDE: u32 = 300;
 const M_SHOW: u32 = 301;
 const M_LOGIN: u32 = 400;
-const M_AUTOHIDE: u32 = 410;
 const M_SETTINGS: u32 = 500;
 const M_ABOUT: u32 = 600;
 const M_QUIT: u32 = 900;
 
+const VK_ESCAPE: u32 = 0x1B;
 const LONG_PRESS_MS: u32 = 350;
 const SWIPE_DP: f32 = 36.0;
 const HOUR_MS: Ms = 3_600_000;
@@ -65,9 +75,15 @@ const PEEK_MS: Ms = 2_500;
 const RETRACT_DELAY_MS: u32 = 300;
 const COLLAPSE_DELAY_MS: u32 = 1_500;
 const TRIM_DELAY_MS: u32 = 4_000;
+const LYRICS_DEBOUNCE_MS: u32 = 350;
+const LYRIC_LEAD_MS: Ms = 180;
+const LYRIC_CACHE: usize = 12;
 const CONTENT_DELAY_MS: f32 = 70.0;
 const CONTENT_FADE_MS: f32 = 130.0;
 const RETIRE_FADE_MS: f32 = 80.0;
+const FX_PAD: f32 = 34.0;
+const HOVER_POP: f32 = 1.06;
+const PRESS_POP: f32 = 0.92;
 const REVEAL: SpringPreset = SpringPreset::new(0.36, 0.30);
 
 #[derive(Debug, Clone)]
@@ -114,7 +130,8 @@ struct ViewKey {
     kind: ViewKind,
     alert: Option<AlertKind>,
     expression: Expression,
-    skin: notchi_core::color::Skin,
+    skin: Skin,
+    style: Style,
     mascot_on: bool,
     lang: Lang,
     scale_bits: u32,
@@ -127,6 +144,7 @@ struct ViewKey {
     stopwatch_running: Option<bool>,
     reduce_motion: bool,
     presets: Vec<u32>,
+    lyric: u8,
 }
 
 struct Content {
@@ -139,6 +157,19 @@ struct Content {
 struct Pointer {
     down: Option<Point>,
     consumed: bool,
+}
+
+#[derive(Debug)]
+enum LyricStatus {
+    Loading,
+    Missing,
+    Ready(Lyrics),
+}
+
+#[derive(Debug)]
+struct LyricSlot {
+    track: u64,
+    status: LyricStatus,
 }
 
 pub struct IslandApp {
@@ -166,6 +197,11 @@ pub struct IslandApp {
     window_px: (i32, i32),
     morph_seq: u64,
     retire_seq: u64,
+    fx: Vec<(u64, ContainerVisual)>,
+    fx_seq: u64,
+    hover_button: Option<Button>,
+    pressed_button: Option<Button>,
+    settings: Option<Settings>,
 
     paths: Paths,
     exe: PathBuf,
@@ -177,6 +213,9 @@ pub struct IslandApp {
     media: Option<MediaService>,
     snap: Option<MediaSnapshot>,
     art: Option<(u64, Artwork)>,
+    lyric: Option<LyricSlot>,
+    lyric_cache: VecDeque<(String, Option<Lyrics>)>,
+    lyric_inflight: Option<(u64, String)>,
     presence: MediaPresence,
     timer: Option<Countdown>,
     done_timer: Option<Countdown>,
@@ -204,12 +243,36 @@ fn slot_of(kind: ActivityKind) -> Slot {
     }
 }
 
+fn flag(on: bool) -> &'static str {
+    if on { "true" } else { "false" }
+}
+
+fn quoted(s: &str) -> String {
+    format!("\"{s}\"")
+}
+
+fn lyric_key(q: &Query) -> String {
+    format!("{}\u{1}{}\u{1}{}", q.title.to_lowercase(), q.artist.to_lowercase(), q.album.to_lowercase())
+}
+
+fn query_of(snap: &MediaSnapshot) -> Query {
+    Query::new(&snap.title, &snap.artist, &snap.album, snap.timeline.map_or(0, |t| t.end))
+}
+
+fn lyric_timing(snap: &MediaSnapshot, now: Ms) -> (Ms, Ms) {
+    let pos = snap.position_at(now).unwrap_or(0) + LYRIC_LEAD_MS;
+    (pos, snap.timeline.map_or(0, |t| t.end))
+}
+
 impl IslandApp {
-    pub fn install(owned: &mut OwnedWindow, paths: Paths, exe: PathBuf) -> Result<()> {
+    pub fn install(owned: &mut OwnedWindow, paths: Paths, exe: PathBuf, open_settings: bool) -> Result<()> {
         owned.register_power_notifications();
         owned.register_fullscreen_notifications();
         let mut app = IslandApp::new(owned.window(), owned.proxy(), paths, exe)?;
         app.update();
+        if open_settings {
+            app.open_settings();
+        }
         owned.set_handler(move |_, ev| app.handle(ev));
         Ok(())
     }
@@ -218,15 +281,16 @@ impl IslandApp {
         let (cfg, cfg_text, warnings) = load_config(&paths);
         let host = CompositionHost::new(&window)?;
         let anim = Animator::new(&host.compositor);
-        let gfx = Gfx::new(&host.compositor)?;
+        let gfx = Rc::new(Gfx::new(&host.compositor)?);
         let scale = scale_for_dpi(primary_monitor().dpi);
-        let ui = Ui { c: host.compositor.clone(), anim, gfx, scale };
+        let pal = theme::palette(cfg.style);
+        let ui = Ui { c: host.compositor.clone(), anim, gfx, scale, pal, accent: cfg.mascot.skin.color() };
 
         let stage = ui.container(&host.root)?;
         stage.SetRelativeOffsetAdjustment(v3(0.5, 0.0, 0.0))?;
         stage.SetScale(v3(scale, scale, 1.0))?;
-        let bubble = Pill::new(&ui, &stage, ISLAND_BG)?;
-        let main = Pill::new(&ui, &stage, ISLAND_BG)?;
+        let bubble = Pill::new(&ui, &stage, pal.base)?;
+        let main = Pill::new(&ui, &stage, pal.base)?;
         for (pill, size) in [(&main, layout::IDLE), (&bubble, BUBBLE)] {
             pill.visual.SetSize(v2(size.w, size.h))?;
             pill.visual.SetOpacity(0.0)?;
@@ -257,13 +321,21 @@ impl IslandApp {
             window_px: (0, 0),
             morph_seq: 0,
             retire_seq: 0,
+            fx: Vec::new(),
+            fx_seq: 0,
+            hover_button: None,
+            pressed_button: None,
+            settings: None,
             paths,
             exe,
-            island: Island::new(cfg.island.mode),
+            island: Island::new(cfg.island.behavior),
             acts: Activities::new(),
             media: None,
             snap: None,
             art: None,
+            lyric: None,
+            lyric_cache: VecDeque::new(),
+            lyric_inflight: None,
             presence: MediaPresence::new(cfg.media.paused_linger_seconds as Ms * 1000),
             timer: None,
             done_timer: None,
@@ -294,11 +366,12 @@ impl IslandApp {
     fn apply_config(&mut self, new: Config, warnings: Vec<Warning>, first: bool) {
         let old = std::mem::replace(&mut self.cfg, new);
         self.warnings = warnings;
+        self.island.set_behavior(self.cfg.island.behavior);
+        self.ui.accent = self.cfg.mascot.skin.color();
         let cfg = &self.cfg;
-        self.island.set_mode(cfg.island.mode);
-        self.island.set_autohide(cfg.island.autohide);
 
-        if first || old.island.hotkey != cfg.island.hotkey {
+        let hotkey_changed = first || old.island.hotkey != cfg.island.hotkey;
+        if hotkey_changed {
             self.window.unregister_hotkey(HK_TOGGLE);
             self.hotkey_ok = self.window.register_hotkey(HK_TOGGLE, &cfg.island.hotkey);
         }
@@ -322,21 +395,36 @@ impl IslandApp {
         if first || old.power.low_thresholds != cfg.power.low_thresholds {
             self.battery = BatteryMonitor::new(&cfg.power.low_thresholds);
         }
-        if (first || old.launch_at_login != cfg.launch_at_login)
-            && shell::launch_at_login_enabled() != cfg.launch_at_login {
-                shell::set_launch_at_login(cfg.launch_at_login, &self.exe);
-            }
-        if !first && old.mascot.skin != cfg.mascot.skin
-            && let Some(tray) = self.tray.take() {
-                drop(tray);
-                let icon = IconImage { size: 32, rgba: mascot_rgba(32, self.cfg.mascot.skin) };
-                self.tray = TrayIcon::new(&self.window, &icon, "Notchi").ok();
-            }
-        if first || old.liquid != self.cfg.liquid {
+        if (first || old.launch_at_login != cfg.launch_at_login) && shell::launch_at_login_enabled() != cfg.launch_at_login {
+            shell::set_launch_at_login(cfg.launch_at_login, &self.exe);
+        }
+        if !self.cfg.media.lyrics {
+            self.lyric = None;
+            self.window.kill_timer(T_LYRICS);
+        }
+        if !first
+            && old.mascot.skin != self.cfg.mascot.skin
+            && let Some(tray) = self.tray.take()
+        {
+            drop(tray);
+            let icon = IconImage { size: 32, rgba: mascot_rgba(32, self.cfg.mascot.skin) };
+            self.tray = TrayIcon::new(&self.window, &icon, "Notchi").ok();
+        }
+        if first || old.style != self.cfg.style {
+            self.ui.pal = theme::palette(self.cfg.style);
+            let base = self.ui.pal.base;
+            let _ = self.main.set_fill(&self.ui, base);
+            let _ = self.bubble.set_fill(&self.ui, base);
             self.apply_liquid();
+        } else if old.liquid != self.cfg.liquid {
+            self.apply_liquid();
+        }
+        if hotkey_changed && let Some(s) = self.settings.as_mut() {
+            s.set_hotkey(self.cfg.island.hotkey.display());
         }
         self.refresh_motion();
         self.update_tooltip();
+        self.sync_settings();
         self.key = None;
     }
 
@@ -362,13 +450,24 @@ impl IslandApp {
         self.apply_config(cfg, warnings, false);
     }
 
-    fn persist(&mut self, section: &str, key: &str, value: &str) {
-        let text = config::set_value(&self.cfg_text, section, key, value);
+    fn persist_with(&mut self, edit: impl FnOnce(&str) -> String) {
+        let text = edit(&self.cfg_text);
         if std::fs::write(&self.paths.config, &text).is_ok() {
             self.cfg_text = text.clone();
         }
         let (cfg, warnings) = config::parse(&text);
         self.apply_config(cfg, warnings, false);
+    }
+
+    fn persist(&mut self, section: &str, key: &str, value: &str) {
+        self.persist_with(|text| config::set_value(text, section, key, value));
+    }
+
+    fn persist_behavior(&mut self, b: Behavior) {
+        self.persist_with(|text| {
+            let text = config::LEGACY_ISLAND_KEYS.iter().fold(text.to_string(), |acc, k| config::remove_value(&acc, "island", k));
+            config::set_value(&text, "island", "behavior", &quoted(b.key()))
+        });
     }
 
     fn refresh_motion(&mut self) {
@@ -380,6 +479,7 @@ impl IslandApp {
         if self.ui.anim.reduce_motion != reduce {
             self.ui.anim.reduce_motion = reduce;
             self.key = None;
+            self.sync_settings();
         }
     }
 
@@ -391,10 +491,7 @@ impl IslandApp {
         match ev {
             Event::MouseMove(p) => self.on_mouse_move(p),
             Event::MouseLeave => self.on_mouse_leave(),
-            Event::MouseDown(p, MouseButton::Left) => {
-                self.pointer = Pointer { down: Some(p), consumed: false };
-                self.window.set_timer(T_LONG_PRESS, LONG_PRESS_MS);
-            }
+            Event::MouseDown(p, MouseButton::Left) => self.on_mouse_down(p),
             Event::MouseUp(p, MouseButton::Left) => self.on_click(p, now),
             Event::MouseUp(_, MouseButton::Right) => self.show_menu(),
             Event::MouseDown(..) | Event::MouseUp(..) => {}
@@ -407,9 +504,10 @@ impl IslandApp {
             Event::SettingsChanged => self.refresh_motion(),
             Event::PowerChanged => {
                 if self.cfg.power.enabled
-                    && let Some(e) = self.battery.update(power::read()) {
-                        self.power_alert(e);
-                    }
+                    && let Some(e) = self.battery.update(power::read())
+                {
+                    self.power_alert(e);
+                }
             }
             Event::FullscreenHint(on) => {
                 self.fullscreen_hint = on;
@@ -427,6 +525,7 @@ impl IslandApp {
                 }
             }
             Event::Tray(TrayEvent::Click) | Event::SecondInstance => self.island.hotkey(),
+            Event::OpenSettings => self.open_settings(),
             Event::Tray(TrayEvent::Menu) => self.show_menu(),
             Event::TaskbarCreated => {
                 if let Some(tray) = &self.tray {
@@ -440,8 +539,11 @@ impl IslandApp {
                     self.art = art.map(|a| (track_id, a));
                 }
             }
+            Event::Lyrics { track_id, lyrics, failed } => self.on_lyrics(track_id, lyrics, failed),
             Event::FileChanged => self.window.set_timer(T_CONFIG, 300),
             Event::User(tag) => self.on_batch(tag),
+            Event::Panel(inner) => self.on_panel(*inner),
+            Event::Close | Event::Key(_) => {}
         }
         self.update();
     }
@@ -452,6 +554,7 @@ impl IslandApp {
                 self.window.kill_timer(T_LONG_PRESS);
                 if self.pointer.down.is_some() && !self.pointer.consumed {
                     self.pointer.consumed = true;
+                    self.release_button();
                     self.island.long_press();
                 }
             }
@@ -477,16 +580,98 @@ impl IslandApp {
                     sys::trim_memory();
                 }
             }
+            T_LYRICS => {
+                self.window.kill_timer(T_LYRICS);
+                self.fetch_lyrics();
+            }
             _ => {}
         }
     }
 
     fn on_media(&mut self, snap: Option<MediaSnapshot>, now: Ms) {
-        if snap.as_ref().map(|s| s.track_id) != self.snap.as_ref().map(|s| s.track_id) {
+        let track = snap.as_ref().map(|s| s.track_id);
+        if track != self.snap.as_ref().map(|s| s.track_id) {
             self.art = None;
+            if self.lyric.as_ref().map(|l| l.track) != track {
+                self.lyric = None;
+            }
         }
         self.presence.update(snap.as_ref(), now);
         self.snap = snap;
+    }
+
+    fn ensure_lyrics(&mut self) {
+        let Some(snap) = self.snap.as_ref() else { return };
+        let track = snap.track_id;
+        if self.lyric.as_ref().is_some_and(|l| l.track == track) {
+            return;
+        }
+        let q = query_of(snap);
+        let status = if !q.is_usable() {
+            LyricStatus::Missing
+        } else {
+            let key = lyric_key(&q);
+            match self.lyric_cache.iter().find(|(k, _)| *k == key) {
+                Some((_, Some(l))) => LyricStatus::Ready(l.clone()),
+                Some((_, None)) => LyricStatus::Missing,
+                None => {
+                    self.window.set_timer(T_LYRICS, LYRICS_DEBOUNCE_MS);
+                    LyricStatus::Loading
+                }
+            }
+        };
+        self.lyric = Some(LyricSlot { track, status });
+    }
+
+    fn fetch_lyrics(&mut self) {
+        let Some(snap) = self.snap.as_ref() else { return };
+        let track = snap.track_id;
+        let loading = self.lyric.as_ref().is_some_and(|l| l.track == track && matches!(l.status, LyricStatus::Loading));
+        if !loading || self.lyric_inflight.as_ref().is_some_and(|(t, _)| *t == track) {
+            return;
+        }
+        let q = query_of(snap);
+        let key = lyric_key(&q);
+        let proxy = self.proxy.clone();
+        let spawned = std::thread::Builder::new().name("notchi-lyrics".into()).stack_size(256 * 1024).spawn(move || {
+            let r = net::fetch_lyrics(&q);
+            let failed = r.is_err();
+            proxy.post(Event::Lyrics { track_id: track, lyrics: r.ok().flatten(), failed });
+        });
+        match spawned {
+            Ok(_) => self.lyric_inflight = Some((track, key)),
+            Err(_) => self.lyric = Some(LyricSlot { track, status: LyricStatus::Missing }),
+        }
+    }
+
+    fn on_lyrics(&mut self, track: u64, lyrics: Option<Lyrics>, failed: bool) {
+        let Some((t, key)) = self.lyric_inflight.take_if(|(t, _)| *t == track) else { return };
+        if !failed {
+            self.lyric_cache.retain(|(k, _)| *k != key);
+            if self.lyric_cache.len() >= LYRIC_CACHE {
+                self.lyric_cache.pop_front();
+            }
+            self.lyric_cache.push_back((key, lyrics.clone()));
+        }
+        if self.lyric.as_ref().is_some_and(|l| l.track == t) {
+            let status = match lyrics {
+                Some(l) => LyricStatus::Ready(l),
+                None => LyricStatus::Missing,
+            };
+            self.lyric = Some(LyricSlot { track: t, status });
+        }
+    }
+
+    fn lyric_state(&self) -> Option<LyricState<'_>> {
+        if !self.cfg.media.lyrics {
+            return None;
+        }
+        let track = self.snap.as_ref().map(|s| s.track_id);
+        Some(match self.lyric.as_ref().filter(|l| Some(l.track) == track).map(|l| &l.status) {
+            Some(LyricStatus::Ready(l)) => LyricState::Ready(l),
+            Some(LyricStatus::Missing) => LyricState::Missing,
+            _ => LyricState::Loading,
+        })
     }
 
     fn power_alert(&mut self, e: PowerEvent) {
@@ -525,6 +710,11 @@ impl IslandApp {
         r.contains(p).then(|| Point::new(p.x - r.x, p.y - r.y))
     }
 
+    fn stage_point(&self, local: Point) -> Point {
+        let main_x = if self.shape.bubble { -(BUBBLE_GAP + BUBBLE.w) / 2.0 } else { 0.0 };
+        Point::new(main_x - self.shape.main.w / 2.0 + local.x, local.y)
+    }
+
     fn on_mouse_move(&mut self, p: Point) {
         self.window.kill_timer(T_RETRACT);
         if !self.island.is_hover() {
@@ -532,20 +722,26 @@ impl IslandApp {
             self.window.kill_timer(T_COLLAPSE);
         }
         if self.island.is_expanded() && !self.esc_registered {
-            let esc = notchi_core::hotkey::Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: 0x1B };
+            let esc = notchi_core::hotkey::Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: VK_ESCAPE as u16 };
             self.esc_registered = self.window.register_hotkey(HK_ESC, &esc);
         }
         if let Some(down) = self.pointer.down {
             let dx = p.x - down.x;
             if !self.pointer.consumed && dx.abs() > SWIPE_DP {
                 self.pointer.consumed = true;
+                self.release_button();
                 self.swipe(if dx > 0.0 { -1 } else { 1 });
             }
+        }
+        if let Err(e) = self.track_pointer(Some(p)) {
+            log(&format!("pointer gagal: {e}"));
         }
     }
 
     fn on_mouse_leave(&mut self) {
         self.pointer = Pointer::default();
+        self.release_button();
+        let _ = self.track_pointer(None);
         if self.island.autohide() && !self.island.is_expanded() {
             self.window.set_timer(T_RETRACT, RETRACT_DELAY_MS);
         } else {
@@ -558,6 +754,68 @@ impl IslandApp {
         if self.island.is_expanded() {
             self.window.set_timer(T_COLLAPSE, COLLAPSE_DELAY_MS);
         }
+    }
+
+    fn on_mouse_down(&mut self, p: Point) {
+        self.pointer = Pointer { down: Some(p), consumed: false };
+        self.window.set_timer(T_LONG_PRESS, LONG_PRESS_MS);
+        let hit = self.button_at(p);
+        if let Some(b) = hit.filter(|b| *b != Button::Mascot) {
+            self.pop_button(b, PRESS_POP);
+        }
+        self.pressed_button = hit;
+    }
+
+    fn release_button(&mut self) {
+        if let Some(b) = self.pressed_button.take()
+            && b != Button::Mascot
+        {
+            self.pop_button(b, if self.hover_button == Some(b) { HOVER_POP } else { 1.0 });
+        }
+    }
+
+    fn button_at(&self, p: Point) -> Option<Button> {
+        if !self.island.is_expanded() {
+            return None;
+        }
+        let local = self.pill_local(p)?;
+        self.content.as_ref().and_then(|c| layout::hit(&c.d.buttons, local))
+    }
+
+    fn pop_button(&self, b: Button, scale: f32) {
+        if let Some(h) = self.content.as_ref().and_then(|c| c.d.host(b)) {
+            let _ = self.ui.pop(h, scale);
+        }
+    }
+
+    fn track_pointer(&mut self, p: Option<Point>) -> Result<()> {
+        let local = p.and_then(|p| self.pill_local(p));
+        let hit = p.and_then(|p| self.button_at(p));
+        if let Some(m) = self.content.as_mut().and_then(|c| c.d.mascot.as_mut()) {
+            match local {
+                Some(l) => {
+                    let c = m.center();
+                    m.look(&self.ui, (l.x - c.x) / 90.0, (l.y - c.y) / 50.0)?;
+                }
+                None => m.look(&self.ui, 0.0, 0.0)?,
+            }
+        }
+        if hit == self.hover_button {
+            return Ok(());
+        }
+        let pressed = self.pressed_button;
+        for (b, on) in [(self.hover_button, false), (hit, true)] {
+            let Some(b) = b else { continue };
+            if b == Button::Mascot {
+                if let Some(m) = self.content.as_mut().and_then(|c| c.d.mascot.as_mut()) {
+                    m.perk(&self.ui, on)?;
+                }
+            } else if pressed != Some(b) {
+                self.pop_button(b, if on { HOVER_POP } else { 1.0 });
+            }
+        }
+        self.hover_button = hit;
+        Ok(())
     }
 
     fn swipe(&mut self, step: i32) {
@@ -576,19 +834,20 @@ impl IslandApp {
         self.window.kill_timer(T_LONG_PRESS);
         let consumed = self.pointer.consumed;
         self.pointer = Pointer::default();
+        let pressed = self.pressed_button;
+        self.release_button();
         if consumed {
             return;
         }
-        let Some(local) = self.pill_local(p) else {
+        let Some(_) = self.pill_local(p) else {
             self.island.collapse();
             return;
         };
-        if self.island.is_expanded() {
-            let hit = self.content.as_ref().and_then(|c| layout::hit(&c.d.buttons, local));
-            if let Some(b) = hit {
+        if let Some(b) = self.button_at(p) {
+            if pressed == Some(b) {
                 self.press(b, now);
-                return;
             }
+            return;
         }
         self.island.click(now);
     }
@@ -637,6 +896,37 @@ impl IslandApp {
                 }
             }
             Button::StartStopwatch => self.stopwatch = Some(Stopwatch::start(now)),
+            Button::Lyrics => {
+                let on = !self.cfg.media.lyrics;
+                self.persist("media", "lyrics", flag(on));
+            }
+            Button::Mascot => self.boop(),
+        }
+    }
+
+    fn boop(&mut self) {
+        let Some(m) = self.content.as_mut().and_then(|c| c.d.mascot.as_mut()) else { return };
+        if let Err(e) = m.boop(&self.ui) {
+            log(&format!("boop gagal: {e}"));
+        }
+        let center = m.center();
+        let at = self.stage_point(center);
+        self.burst(at, Burst::Sparkle, &fx::sparkle_colors(self.ui.accent));
+    }
+
+    fn burst(&mut self, at: Point, kind: Burst, colors: &[Color]) {
+        self.fx_seq += 1;
+        let seed = now_ms().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (self.fx_seq << 21);
+        match fx::burst(&self.ui, &self.stage, Spark { at, kind, colors, seed }, &self.proxy, TAG_FX | self.fx_seq) {
+            Ok(Some(v)) => {
+                let was_empty = self.fx.is_empty();
+                self.fx.push((self.fx_seq, v));
+                if was_empty {
+                    self.apply_region();
+                }
+            }
+            Ok(None) => {}
+            Err(e) => log(&format!("partikel gagal: {e}")),
         }
     }
 
@@ -678,17 +968,17 @@ impl IslandApp {
             .enumerate()
             .map(|(i, m)| MenuItem::item(M_PRESET + i as u32, format!("{m} {}", t(lang, Text::Minutes))))
             .collect();
-        let mode = self.cfg.island.mode;
-        let modes = DisplayMode::ALL
+        let current = self.cfg.island.behavior;
+        let behaviors = Behavior::ALL
             .iter()
             .enumerate()
-            .map(|(i, m)| {
-                let label = match m {
-                    DisplayMode::Always => t(lang, Text::ModeAlways),
-                    DisplayMode::ActivityOnly => t(lang, Text::ModeActivity),
-                    DisplayMode::Hover => t(lang, Text::ModeHover),
+            .map(|(i, b)| {
+                let label = match b {
+                    Behavior::Autohide => t(lang, Text::BehaviorAutohide),
+                    Behavior::Sticky => t(lang, Text::BehaviorSticky),
+                    Behavior::Hide => t(lang, Text::BehaviorHide),
                 };
-                MenuItem::check(M_MODE + i as u32, label, *m == mode)
+                MenuItem::check(M_BEHAVIOR + i as u32, label, *b == current)
             })
             .collect();
         let snoozed = self.island.is_snoozed(now);
@@ -696,9 +986,8 @@ impl IslandApp {
             MenuItem::Submenu { label: t(lang, Text::MenuTimer).into(), items: presets },
             MenuItem::item(M_STOPWATCH, t(lang, Text::MenuStopwatch)),
             MenuItem::Separator,
-            MenuItem::Submenu { label: t(lang, Text::MenuMode).into(), items: modes },
+            MenuItem::Submenu { label: t(lang, Text::MenuBehavior).into(), items: behaviors },
             if snoozed { MenuItem::item(M_SHOW, t(lang, Text::MenuShowAgain)) } else { MenuItem::item(M_HIDE, t(lang, Text::MenuHideHour)) },
-            MenuItem::check(M_AUTOHIDE, t(lang, Text::MenuAutohide), self.cfg.island.autohide),
             MenuItem::check(M_LOGIN, t(lang, Text::MenuLaunchAtLogin), self.cfg.launch_at_login),
             MenuItem::Separator,
             MenuItem::item(M_SETTINGS, t(lang, Text::MenuSettings)),
@@ -719,21 +1008,16 @@ impl IslandApp {
                     self.island.unsnooze();
                 }
             }
-            id if (M_MODE..M_MODE + 3).contains(&id) => {
-                let m = DisplayMode::ALL[(id - M_MODE) as usize];
-                self.persist("island", "mode", &format!("\"{}\"", m.key()));
+            id if (M_BEHAVIOR..M_BEHAVIOR + 3).contains(&id) => {
+                self.persist_behavior(Behavior::ALL[(id - M_BEHAVIOR) as usize]);
             }
             M_HIDE => self.island.snooze(now + HOUR_MS),
             M_SHOW => self.island.unsnooze(),
-            M_AUTOHIDE => {
-                let on = !self.cfg.island.autohide;
-                self.persist("island", "autohide", if on { "true" } else { "false" });
-            }
             M_LOGIN => {
                 let on = !self.cfg.launch_at_login;
-                self.persist("startup", "launch_at_login", if on { "true" } else { "false" });
+                self.persist("startup", "launch_at_login", flag(on));
             }
-            M_SETTINGS => shell::edit_text_file(&self.paths.config),
+            M_SETTINGS => self.open_settings(),
             M_ABOUT => {
                 let body = format!("Notchi {}\n\n{}", env!("CARGO_PKG_VERSION"), t(lang, Text::AboutBody));
                 self.window.message_box("Notchi", &body);
@@ -743,7 +1027,83 @@ impl IslandApp {
         }
     }
 
+    fn open_settings(&mut self) {
+        if let Some(s) = &self.settings {
+            s.focus();
+            return;
+        }
+        let icon = IconImage { size: 32, rgba: mascot_rgba(32, self.cfg.mascot.skin) };
+        match Settings::open(&self.ui, &self.proxy, &self.cfg, self.cfg.island.hotkey.display(), &icon) {
+            Ok(s) => self.settings = Some(s),
+            Err(e) => {
+                log(&format!("jendela pengaturan gagal: {e}"));
+                shell::edit_text_file(&self.paths.config);
+            }
+        }
+    }
+
+    fn close_settings(&mut self) {
+        if self.settings.take().is_some() {
+            self.window.set_timer(T_TRIM, TRIM_DELAY_MS);
+        }
+    }
+
+    fn sync_settings(&mut self) {
+        if let Some(s) = self.settings.as_mut()
+            && let Err(e) = s.update(&self.ui, &self.cfg)
+        {
+            log(&format!("pengaturan gagal diperbarui: {e}"));
+        }
+    }
+
+    fn on_panel(&mut self, ev: Event) {
+        let Some(s) = self.settings.as_mut() else { return };
+        let r = match ev {
+            Event::MouseMove(p) => s.pointer_move(Some(p)).map(|_| None),
+            Event::MouseLeave => s.pointer_move(None).map(|_| None),
+            Event::MouseDown(p, MouseButton::Left) => s.pointer_down(p).map(|_| None),
+            Event::MouseUp(p, MouseButton::Left) => s.pointer_up(p),
+            Event::DpiChanged(_) => s.rescale(&self.cfg).map(|_| None),
+            Event::Close | Event::Key(VK_ESCAPE) => {
+                self.close_settings();
+                return;
+            }
+            _ => Ok(None),
+        };
+        match r {
+            Ok(Some(a)) => self.apply_setting(a),
+            Ok(None) => {}
+            Err(e) => log(&format!("pengaturan gagal: {e}")),
+        }
+    }
+
+    fn apply_setting(&mut self, a: Action) {
+        let i = a.index;
+        let on = i == 1;
+        match a.setting {
+            Setting::Behavior => self.persist_behavior(Behavior::ALL[i.min(2)]),
+            Setting::Liquid => self.persist("motion", "liquid", flag(on)),
+            Setting::Fullscreen => self.persist("island", "hide_in_fullscreen", flag(on)),
+            Setting::Style => self.persist("appearance", "style", &quoted(Style::ALL[i.min(2)].key())),
+            Setting::Reduce => self.persist("motion", "reduce", &quoted(["system", "on", "off"][i.min(2)])),
+            Setting::Mascot => self.persist("mascot", "enabled", flag(on)),
+            Setting::Skin => {
+                let skin = Skin::ALL[i.min(Skin::ALL.len() - 1)];
+                self.persist("mascot", "skin", &quoted(skin.key()));
+            }
+            Setting::Media => self.persist("media", "enabled", flag(on)),
+            Setting::Lyrics => self.persist("media", "lyrics", flag(on)),
+            Setting::Scroll => self.persist("media", "scroll_volume", flag(on)),
+            Setting::Sound => self.persist("timer", "sound", flag(on)),
+            Setting::Language => self.persist_with(|text| config::set_value(text, "", "language", &quoted(if on { "en" } else { "id" }))),
+            Setting::Login => self.persist("startup", "launch_at_login", flag(on)),
+            Setting::Advanced => shell::edit_text_file(&self.paths.config),
+            Setting::Boop => {}
+        }
+    }
+
     fn shutdown(&mut self) {
+        self.settings = None;
         self.tray = None;
         self.media = None;
         self.window.unregister_hotkey(HK_TOGGLE);
@@ -792,6 +1152,7 @@ impl IslandApp {
             Presentation::Compact => ViewKind::Compact(slot_of(ordered[0])),
             Presentation::Minimal => ViewKind::Minimal(slot_of(ordered[0]), slot_of(ordered[1])),
             Presentation::Expanded => ViewKind::Card(match ordered.first() {
+                Some(ActivityKind::Media) if self.cfg.media.lyrics => Card::Lyrics,
                 Some(ActivityKind::Media) => Card::Media,
                 Some(ActivityKind::Timer) => Card::Timer,
                 Some(ActivityKind::Stopwatch) => Card::Stopwatch,
@@ -819,6 +1180,9 @@ impl IslandApp {
         let retracted = self.island.is_retracted(now);
         let full_kind = self.view_kind(&pres);
         let kind = if retracted { ViewKind::Empty } else { full_kind };
+        if kind == ViewKind::Card(Card::Lyrics) {
+            self.ensure_lyrics();
+        }
         let alert = match &pres {
             Presentation::Alert(a) => Some(a.clone()),
             _ => None,
@@ -836,6 +1200,12 @@ impl IslandApp {
         let full = Self::shape_for(full_kind, alert.as_ref());
         let shape = if retracted { full.retracted() } else { full };
         let visible = kind != ViewKind::Hidden;
+        let lyric = match self.lyric_state() {
+            None => 0,
+            Some(LyricState::Loading) => 1,
+            Some(LyricState::Missing) => 2,
+            Some(LyricState::Ready(_)) => 3,
+        };
         let key = ViewKey {
             kind,
             alert: alert.clone().map(|a| match a {
@@ -844,6 +1214,7 @@ impl IslandApp {
             }),
             expression,
             skin: self.cfg.mascot.skin,
+            style: self.cfg.style,
             mascot_on: self.cfg.mascot.enabled,
             lang: self.cfg.language,
             scale_bits: self.ui.scale.to_bits(),
@@ -856,6 +1227,7 @@ impl IslandApp {
             stopwatch_running: self.stopwatch.map(|s| s.is_running()),
             reduce_motion: self.ui.anim.reduce_motion,
             presets: self.cfg.timer.presets_minutes.clone(),
+            lyric: if kind == ViewKind::Card(Card::Lyrics) { lyric } else { 0 },
         };
 
         let revealing = self.retracted && !retracted;
@@ -872,6 +1244,11 @@ impl IslandApp {
                 SpringPreset::BOUNCY
             };
             self.morph(shape, preset)?;
+            if revealing && self.cfg.liquid && visible {
+                let at = self.stage_point(Point::new(shape.main.w / 2.0, shape.main.h - 2.0));
+                let base = self.ui.pal.base;
+                self.burst(at, Burst::Drip, &[base, self.ui.accent.with_opacity(0.8)]);
+            }
         }
         if visible != self.visible {
             self.set_visible(visible)?;
@@ -891,11 +1268,29 @@ impl IslandApp {
             self.window.watch_outside(watch);
         }
         if self.key.as_ref() != Some(&key) {
+            let fresh_alert = alert.is_some() && self.key.as_ref().map(|k| &k.alert) != Some(&key.alert);
             self.rebuild(&key, alert.as_ref(), expression, now, morphing)?;
             self.key = Some(key);
+            if fresh_alert && let Some(a) = alert.as_ref() {
+                self.celebrate(a, shape);
+            }
         }
         self.refresh_dynamic(alert.as_ref(), now)?;
         Ok(())
+    }
+
+    fn celebrate(&mut self, alert: &AlertKind, shape: Shape) {
+        let (kind, colors) = match alert {
+            AlertKind::TimerDone => {
+                (Burst::Confetti, vec![color::accent_alert(), self.ui.accent, color::accent_charging(), TEXT_PRIMARY])
+            }
+            AlertKind::Charging { .. } => (Burst::Sparkle, vec![color::accent_charging(), TEXT_PRIMARY]),
+            _ => return,
+        };
+        let center = self.content.as_ref().and_then(|c| c.d.mascot.as_ref()).map(|m| m.center());
+        let local = center.unwrap_or(Point::new(shape.main.w / 2.0, shape.main.h / 2.0));
+        let at = self.stage_point(local);
+        self.burst(at, kind, &colors);
     }
 
     fn model(&self, now: Ms, expression: Expression) -> Model<'_> {
@@ -911,6 +1306,7 @@ impl IslandApp {
             stopwatch: self.stopwatch.as_ref(),
             presets: &self.cfg.timer.presets_minutes,
             clock: shell::local_time(),
+            lyrics: self.lyric_state(),
         }
     }
 
@@ -930,6 +1326,8 @@ impl IslandApp {
         if let Some(old) = self.bubble_content.take() {
             self.retire(old, true)?;
         }
+        self.hover_button = None;
+        self.pressed_button = None;
         let root = self.ui.container(&self.main.content)?;
         root.SetOpacity(0.0)?;
         let mut d = Dyn::default();
@@ -946,13 +1344,13 @@ impl IslandApp {
                 self.ui.anim.linear(&b, "Opacity", 1.0, CONTENT_FADE_MS, if morphing { CONTENT_DELAY_MS } else { 0.0 })?;
                 self.bubble_content = Some(b);
             }
-            ViewKind::Card(Card::Media) => views::build_media_card(&self.ui, &root, &m, &mut d)?,
+            ViewKind::Card(Card::Media | Card::Lyrics) => views::build_media_card(&self.ui, &root, &m, &mut d)?,
             ViewKind::Card(Card::Timer) => views::build_timer_card(&self.ui, &root, false, &m, &mut d)?,
             ViewKind::Card(Card::Stopwatch) => views::build_timer_card(&self.ui, &root, true, &m, &mut d)?,
             ViewKind::Card(Card::Home) => views::build_home_card(&self.ui, &root, &m, &mut d)?,
             ViewKind::Alert => {
                 if let Some(a) = alert {
-                    views::build_alert(&self.ui, &root, a, &m)?;
+                    views::build_alert(&self.ui, &root, a, &m, &mut d)?;
                 }
             }
             ViewKind::Hud => {
@@ -998,6 +1396,12 @@ impl IslandApp {
                         self.ui.anim.linear_always(fill, "Size.X", *width, left.max(1.0))?;
                     }
                 }
+            }
+            if let (Some(panel), Some(LyricSlot { track, status: LyricStatus::Ready(l) })) = (d.lyrics.as_mut(), self.lyric.as_ref())
+                && *track == snap.track_id
+            {
+                let (pos, dur) = lyric_timing(snap, now);
+                panel.show(&self.ui, l, l.index_at(pos, dur))?;
             }
         }
         if let (Some((bar, width)), Some(AlertKind::Volume { level, muted })) = (d.hud_bar.as_ref(), alert) {
@@ -1052,14 +1456,8 @@ impl IslandApp {
         let seq = tag & TAG_MASK;
         match tag & !TAG_MASK {
             TAG_MORPH if seq == self.morph_seq => {
-                let now = now_ms();
-                let hover_mode =
-                    self.cfg.island.mode == DisplayMode::Hover && !self.island.is_fullscreen() && !self.island.is_snoozed(now);
                 if self.visible {
                     self.set_region(self.settled_region);
-                } else if hover_mode {
-                    self.set_region(layout::near_zone(&Shape::single(layout::IDLE)));
-                    self.window.show();
                 } else {
                     self.window.hide();
                 }
@@ -1075,6 +1473,24 @@ impl IslandApp {
                     if let Ok(children) = parent.Children() {
                         let _ = children.Remove(&v);
                     }
+                }
+            }
+            TAG_FX => {
+                let (gone, keep): (Vec<_>, Vec<_>) = self.fx.drain(..).partition(|(id, _)| *id <= seq);
+                self.fx = keep;
+                if let Ok(children) = self.stage.Children() {
+                    for (_, v) in gone {
+                        let _ = children.Remove(&v);
+                    }
+                }
+                if self.fx.is_empty() {
+                    self.apply_region();
+                    self.window.set_timer(T_TRIM, TRIM_DELAY_MS);
+                }
+            }
+            TAG_PANEL_FX => {
+                if let Some(s) = self.settings.as_mut() {
+                    s.retire_fx(seq);
                 }
             }
             _ => {}
@@ -1107,8 +1523,9 @@ impl IslandApp {
 
     fn apply_region(&self) {
         let s = self.ui.scale;
-        let w = ((self.region.w * s).ceil() as i32).min(self.window_px.0);
-        let h = ((self.region.h * s).ceil() as i32).min(self.window_px.1);
+        let pad = if self.fx.is_empty() { 0.0 } else { FX_PAD };
+        let w = (((self.region.w + 2.0 * pad) * s).ceil() as i32).min(self.window_px.0);
+        let h = (((self.region.h + pad) * s).ceil() as i32).min(self.window_px.1);
         self.window.set_region((self.window_px.0 - w) / 2, 0, w, h);
     }
 
@@ -1140,10 +1557,19 @@ impl IslandApp {
         if shows_sw {
             want(self.stopwatch.and_then(|s| s.next_tick(now)));
         }
-        if showing == Some(ViewKind::Card(Card::Media))
-            && let Some(pos) = self.snap.as_ref().filter(|s| s.is_playing()).and_then(|s| s.position_at(now)) {
+        let media_card = matches!(showing, Some(ViewKind::Card(Card::Media | Card::Lyrics)));
+        if media_card && let Some(snap) = self.snap.as_ref().filter(|s| s.is_playing()) {
+            if let Some(pos) = snap.position_at(now) {
                 want(Some(now + 1000 - pos % 1000));
             }
+            let shows_lyrics = self.content.as_ref().is_some_and(|c| c.d.lyrics.is_some());
+            if shows_lyrics && let Some(LyricSlot { track, status: LyricStatus::Ready(l) }) = self.lyric.as_ref()
+                && *track == snap.track_id
+            {
+                let (pos, dur) = lyric_timing(snap, now);
+                want(l.next_change(pos, dur).map(|at| now + at.saturating_sub(pos)));
+            }
+        }
         match tick {
             Some(t) => self.window.set_timer(T_TICK, t.saturating_sub(now).max(16) as u32),
             None => self.window.kill_timer(T_TICK),

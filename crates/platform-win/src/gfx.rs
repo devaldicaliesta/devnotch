@@ -1,18 +1,24 @@
 use notchi_core::color::Color;
 use notchi_core::geom::Size;
 use notchi_core::media::Artwork;
+use notchi_core::theme::Relief;
 use windows::Foundation::Size as WinSize;
 use windows::Graphics::DirectX::{DirectXAlphaMode, DirectXPixelFormat};
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionGraphicsDevice, Compositor};
 use windows::Win32::Foundation::{HMODULE, POINT};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D_SIZE_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
-    D2D1_FIGURE_END_CLOSED, D2D1_PIXEL_FORMAT,
+    D2D_RECT_F, D2D_SIZE_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER,
+    D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_ALTERNATE, D2D1_GRADIENT_STOP, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
     D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1CreateFactory, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1,
+    CLSID_D2D1Shadow, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_GAMMA_2_2,
+    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
+    D2D1_PROPERTY_TYPE_FLOAT, D2D1_PROPERTY_TYPE_VECTOR4, D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES, D2D1_ROUNDED_RECT,
+    D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_COLOR, ID2D1Geometry, ID2D1Image, ID2D1Layer,
+    ID2D1RenderTarget,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP};
 use windows::Win32::Graphics::Direct3D11::{
@@ -22,7 +28,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_FEATURE, DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, DWRITE_FONT_STRETCH_NORMAL,
     DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_MEDIUM,
     DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_METRICS,
-    DWRITE_TEXT_RANGE, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
+    DWRITE_TEXT_RANGE, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WRAP,
     DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection, IDWriteTextLayout,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -36,6 +42,8 @@ use windows::Win32::System::WinRT::Composition::{ICompositionDrawingSurfaceInter
 use windows::core::w;
 use windows_core::{HSTRING, Interface, Result};
 use windows_numerics::{Matrix3x2, Vector2};
+
+use std::mem::ManuallyDrop;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Weight {
@@ -65,11 +73,12 @@ pub struct TextStyle {
     pub tabular: bool,
     pub icon: bool,
     pub center: bool,
+    pub lines: u8,
 }
 
 impl TextStyle {
     pub fn new(size: f32, weight: Weight, color: Color) -> Self {
-        Self { size, weight, color, max_width: 600.0, tabular: false, icon: false, center: false }
+        Self { size, weight, color, max_width: 600.0, tabular: false, icon: false, center: false, lines: 1 }
     }
 
     pub fn max_width(mut self, w: f32) -> Self {
@@ -89,6 +98,11 @@ impl TextStyle {
 
     pub fn centered(mut self) -> Self {
         self.center = true;
+        self
+    }
+
+    pub fn wrap(mut self, lines: u8) -> Self {
+        self.lines = lines.max(1);
         self
     }
 }
@@ -205,7 +219,7 @@ impl Gfx {
                 style.size,
                 w!("en-us"),
             )?;
-            format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            format.SetWordWrapping(if style.lines > 1 { DWRITE_WORD_WRAPPING_WRAP } else { DWRITE_WORD_WRAPPING_NO_WRAP })?;
             let sign = self.dwrite.CreateEllipsisTrimmingSign(&format)?;
             let trimming = DWRITE_TRIMMING {
                 granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
@@ -216,7 +230,8 @@ impl Gfx {
             if style.center {
                 format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
             }
-            let layout = self.dwrite.CreateTextLayout(&utf16, &format, style.max_width, style.size * 4.0)?;
+            let max_h = if style.lines > 1 { (style.size * 1.34 * style.lines as f32).ceil() } else { style.size * 4.0 };
+            let layout = self.dwrite.CreateTextLayout(&utf16, &format, style.max_width, max_h)?;
             if style.tabular {
                 let typo = self.dwrite.CreateTypography()?;
                 typo.AddFontFeature(DWRITE_FONT_FEATURE { nameTag: DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, parameter: 1 })?;
@@ -225,7 +240,7 @@ impl Gfx {
             let mut m = DWRITE_TEXT_METRICS::default();
             layout.GetMetrics(&mut m)?;
             let w = if style.center { style.max_width } else { m.widthIncludingTrailingWhitespace.min(style.max_width) };
-            Ok((layout, Size::new(w.max(1.0), m.height.max(1.0))))
+            Ok((layout, Size::new(w.max(1.0), m.height.min(max_h).max(1.0))))
         }
     }
 
@@ -233,7 +248,7 @@ impl Gfx {
         Ok(self.layout(text, style)?.1)
     }
 
-    fn draw(&self, size: Size, scale: f32, paint: impl FnOnce(&ID2D1DeviceContext) -> Result<()>) -> Result<Surface> {
+    fn draw(&self, size: Size, scale: f32, paint: impl FnOnce(&ID2D1DeviceContext, &Matrix3x2) -> Result<()>) -> Result<Surface> {
         let pw = (size.w * scale).ceil().max(1.0);
         let ph = (size.h * scale).ceil().max(1.0);
         let surface = self.graphics.CreateDrawingSurface(
@@ -244,13 +259,14 @@ impl Gfx {
         let interop: ICompositionDrawingSurfaceInterop = surface.cast()?;
         let mut offset = POINT::default();
         let dc: ID2D1DeviceContext = unsafe { interop.BeginDraw(None, &mut offset)? };
+        let base = Matrix3x2::translation(offset.x as f32 / scale, offset.y as f32 / scale);
         unsafe {
             dc.SetDpi(96.0 * scale, 96.0 * scale);
-            dc.SetTransform(&Matrix3x2::translation(offset.x as f32 / scale, offset.y as f32 / scale));
+            dc.SetTransform(&base);
             dc.Clear(Some(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }));
             dc.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         }
-        let painted = paint(&dc);
+        let painted = paint(&dc, &base);
         unsafe { interop.EndDraw()? };
         painted?;
         Ok(Surface { surface, size: Size::new(pw / scale, ph / scale) })
@@ -259,7 +275,7 @@ impl Gfx {
     pub fn text(&self, text: &str, style: &TextStyle, scale: f32) -> Result<Surface> {
         let (layout, size) = self.layout(text, style)?;
         let color = d2d_color(style.color);
-        self.draw(size, scale, |dc| {
+        self.draw(size, scale, |dc, _| {
             unsafe {
                 let brush = dc.CreateSolidColorBrush(&color, None)?;
                 dc.DrawTextLayout(
@@ -279,7 +295,7 @@ impl Gfx {
         let (sw, sh) = if iw / ih > target { (ih * target, ih) } else { (iw, iw / target) };
         let src = D2D_RECT_F { left: (iw - sw) / 2.0, top: (ih - sh) / 2.0, right: (iw + sw) / 2.0, bottom: (ih + sh) / 2.0 };
         let dst = D2D_RECT_F { left: 0.0, top: 0.0, right: size.w, bottom: size.h };
-        self.draw(size, scale, |dc| {
+        self.draw(size, scale, |dc, _| {
             let props = D2D1_BITMAP_PROPERTIES1 {
                 pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
                 dpiX: 96.0,
@@ -303,7 +319,7 @@ impl Gfx {
     pub fn fillet(&self, r: f32, overlap: f32, color: Color, scale: f32, right: bool) -> Result<Surface> {
         let c = d2d_color(color);
         let w = r + overlap;
-        self.draw(Size::new(w, r), scale, |dc| {
+        self.draw(Size::new(w, r), scale, |dc, _| {
             unsafe {
                 let geom = self.d2d_factory.CreatePathGeometry()?;
                 let sink = geom.Open()?;
@@ -339,7 +355,7 @@ impl Gfx {
         let pts: [(f32, f32); 7] =
             [(0.62, 0.0), (0.12, 0.58), (0.46, 0.58), (0.36, 1.0), (0.88, 0.40), (0.54, 0.40), (0.66, 0.0)];
         let c = d2d_color(color);
-        self.draw(size, scale, |dc| {
+        self.draw(size, scale, |dc, _| {
             unsafe {
                 let geom = self.d2d_factory.CreatePathGeometry()?;
                 let sink = geom.Open()?;
@@ -352,6 +368,114 @@ impl Gfx {
                 let brush = dc.CreateSolidColorBrush(&c, None)?;
                 dc.FillGeometry(&geom, &brush, None);
             }
+            Ok(())
+        })
+    }
+
+    fn shadow_of(&self, dc: &ID2D1DeviceContext, base: &Matrix3x2, geom: &ID2D1Geometry, color: Color, blur: f32) -> Result<Option<ID2D1Image>> {
+        if color.a == 0 {
+            return Ok(None);
+        }
+        unsafe {
+            let target = dc.GetTarget()?;
+            let list = dc.CreateCommandList()?;
+            dc.SetTarget(&list);
+            dc.SetTransform(&Matrix3x2::identity());
+            let solid = dc.CreateSolidColorBrush(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }, None)?;
+            dc.FillGeometry(geom, &solid, None);
+            dc.SetTarget(&target);
+            dc.SetTransform(base);
+            list.Close()?;
+            let fx = dc.CreateEffect(&CLSID_D2D1Shadow)?;
+            fx.SetInput(0, &list, true);
+            fx.SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION.0 as u32, D2D1_PROPERTY_TYPE_FLOAT, &(blur / 2.0).max(0.1).to_le_bytes())?;
+            let c = d2d_color(color);
+            let mut rgba = Vec::with_capacity(16);
+            for f in [c.r, c.g, c.b, c.a] {
+                rgba.extend_from_slice(&f.to_le_bytes());
+            }
+            fx.SetValue(D2D1_SHADOW_PROP_COLOR.0 as u32, D2D1_PROPERTY_TYPE_VECTOR4, &rgba)?;
+            Ok(Some(fx.GetOutput()?))
+        }
+    }
+
+    fn gradient(dc: &ID2D1DeviceContext, stops: &[(f32, Color)]) -> Result<windows::Win32::Graphics::Direct2D::ID2D1GradientStopCollection> {
+        let stops: Vec<D2D1_GRADIENT_STOP> =
+            stops.iter().map(|&(position, c)| D2D1_GRADIENT_STOP { position, color: d2d_color(c) }).collect();
+        let rt: &ID2D1RenderTarget = dc;
+        unsafe { rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) }
+    }
+
+    pub fn relief(&self, size: Size, radius: f32, r: &Relief, scale: f32) -> Result<(Surface, f32)> {
+        let pad = r.pad();
+        let full = Size::new(size.w + 2.0 * pad, size.h + 2.0 * pad);
+        let rect = D2D_RECT_F { left: pad, top: pad, right: pad + size.w, bottom: pad + size.h };
+        let radius = radius.min(size.w / 2.0).min(size.h / 2.0).max(0.0);
+        let rounded = D2D1_ROUNDED_RECT { rect, radiusX: radius, radiusY: radius };
+        let d = r.depth;
+        let drop_only = r.outer_tl.a == 0;
+        let surface = self.draw(full, scale, |dc, base| unsafe {
+            let shape: ID2D1Geometry = self.d2d_factory.CreateRoundedRectangleGeometry(&rounded)?.cast()?;
+            let mode = D2D1_INTERPOLATION_MODE_LINEAR;
+            let over = D2D1_COMPOSITE_MODE_SOURCE_OVER;
+            if let Some(i) = self.shadow_of(dc, base, &shape, r.outer_tl, r.blur)? {
+                dc.DrawImage(&i, Some(&Vector2::new(-d, -d)), None, mode, over);
+            }
+            if let Some(i) = self.shadow_of(dc, base, &shape, r.outer_br, r.blur)? {
+                let at = if drop_only { Vector2::new(0.0, d) } else { Vector2::new(d, d) };
+                dc.DrawImage(&i, Some(&at), None, mode, over);
+            }
+            let stops = Self::gradient(dc, &[(0.0, r.fill), (1.0, r.fill_end)])?;
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: Vector2::new(rect.left, rect.top),
+                endPoint: Vector2::new(rect.right, rect.bottom),
+            };
+            let fill = dc.CreateLinearGradientBrush(&props, None, &stops)?;
+            dc.FillGeometry(&shape, &fill, None);
+            if r.has_inner() {
+                let grow = d + r.blur * 2.0 + 2.0;
+                let bounds = D2D_RECT_F { left: rect.left - grow, top: rect.top - grow, right: rect.right + grow, bottom: rect.bottom + grow };
+                let outer: ID2D1Geometry = self.d2d_factory.CreateRectangleGeometry(&bounds)?.cast()?;
+                let frame: ID2D1Geometry =
+                    self.d2d_factory.CreateGeometryGroup(D2D1_FILL_MODE_ALTERNATE, &[Some(outer), Some(shape.clone())])?.cast()?;
+                let tl = self.shadow_of(dc, base, &frame, r.inner_tl, r.blur)?;
+                let br = self.shadow_of(dc, base, &frame, r.inner_br, r.blur)?;
+                let params = D2D1_LAYER_PARAMETERS1 {
+                    contentBounds: D2D_RECT_F { left: -1.0e6, top: -1.0e6, right: 1.0e6, bottom: 1.0e6 },
+                    geometricMask: ManuallyDrop::new(Some(shape.clone())),
+                    maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    maskTransform: Matrix3x2::identity(),
+                    opacity: 1.0,
+                    opacityBrush: ManuallyDrop::new(None),
+                    layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+                };
+                dc.PushLayer(&params, None::<&ID2D1Layer>);
+                if let Some(i) = &tl {
+                    dc.DrawImage(i, Some(&Vector2::new(d, d)), None, mode, over);
+                }
+                if let Some(i) = &br {
+                    dc.DrawImage(i, Some(&Vector2::new(-d, -d)), None, mode, over);
+                }
+                dc.PopLayer();
+                drop(ManuallyDrop::into_inner(params.geometricMask));
+            }
+            Ok(())
+        })?;
+        Ok((surface, pad))
+    }
+
+    pub fn glow(&self, d: f32, color: Color, scale: f32) -> Result<Surface> {
+        let c = d / 2.0;
+        self.draw(Size::new(d, d), scale, |dc, _| unsafe {
+            let stops = Self::gradient(dc, &[(0.0, color), (0.4, color.with_opacity(color.a as f32 / 255.0 * 0.8)), (1.0, color.with_alpha(0))])?;
+            let props = D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES {
+                center: Vector2::new(c, c),
+                gradientOriginOffset: Vector2::new(0.0, 0.0),
+                radiusX: c,
+                radiusY: c,
+            };
+            let brush = dc.CreateRadialGradientBrush(&props, None, &stops)?;
+            dc.FillEllipse(&D2D1_ELLIPSE { point: Vector2::new(c, c), radiusX: c, radiusY: c }, &brush);
             Ok(())
         })
     }
