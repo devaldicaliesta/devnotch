@@ -1,10 +1,10 @@
-# PRD — DevNotch: Island dan Dock untuk Windows 11 (Rust)
+# PRD — Notchi: Island dan Dock untuk Windows 11 (Rust)
 
 Tanggal: 2026-10-31 · Pemilik: devaldicaliesta · Status: draf untuk ditinjau
 
 ## 1. Ringkasan, tujuan, dan metrik
 
-Produk ini adalah satu aplikasi Rust ringan untuk Windows 11 yang mengubah desktop menjadi pengalaman ala macOS: Island interaktif di tengah atas layar, menu bar atas, dan Dock di bawah. Nama kerja: **DevNotch** (sama dengan nama repositori; jangan memakai nama merek Apple, lihat bagian 2.5).
+Produk ini adalah satu aplikasi Rust ringan untuk Windows 11 yang mengubah desktop menjadi pengalaman ala macOS: Island interaktif di tengah atas layar, menu bar atas, dan Dock di bawah. Nama produk: **Notchi**, sama dengan nama maskotnya (bagian 2.6); repositori GitHub tetap bernama `devnotch`. Jangan memakai nama merek Apple, lihat bagian 2.5.
 
 **Keputusan yang sudah disepakati (31 Oktober 2026).**
 
@@ -128,7 +128,7 @@ Ini bukan nasihat hukum; konsultasikan dengan penasihat hukum sebelum rilis publ
 
 ### 2.6 Maskot dan palet warna
 
-Island memiliki maskot orisinal bernama kerja **Notchi**: makhluk kecil bulat berwajah titik yang tinggal di dalam pil dan berubah ekspresi mengikuti aktivitas. Suasananya terinspirasi karakter ceria pada produk agen Dots dari OpenAI, yang masing-masing punya bentuk dan warna sendiri, seperti segitiga berdasi kupu-kupu, kelinci berheadphone, dan awan berbaret ([Fast Company](https://www.fastcompany.com/91615068/openai-dots-agent-crew-of-friendly-mascots)). Karakter itu milik OpenAI, jadi Notchi **tidak** meniru bentuk, nama, maupun palet persisnya; yang diambil hanya gagasan umum "karakter kecil yang ramah dan punya warna berbeda per varian".
+Island memiliki maskot orisinal bernama **Notchi**, yang sekaligus menjadi nama dan wajah produk: makhluk kecil bulat berwajah titik yang tinggal di dalam pil dan berubah ekspresi mengikuti aktivitas. Suasananya terinspirasi karakter ceria pada produk agen Dots dari OpenAI, yang masing-masing punya bentuk dan warna sendiri, seperti segitiga berdasi kupu-kupu, kelinci berheadphone, dan awan berbaret ([Fast Company](https://www.fastcompany.com/91615068/openai-dots-agent-crew-of-friendly-mascots)). Karakter itu milik OpenAI, jadi Notchi **tidak** meniru bentuk, nama, maupun palet persisnya; yang diambil hanya gagasan umum "karakter kecil yang ramah dan punya warna berbeda per varian".
 
 | Aktivitas | Ekspresi Notchi | Gerak |
 | --- | --- | --- |
@@ -254,7 +254,7 @@ Island menampilkan semua sesi yang terdaftar di kontrol media sistem Windows, se
 - **Banyak sesi:** Island memakai sesi yang dinilai sistem paling mungkin dikontrol pengguna (`GetCurrentSession`), dan pengguna dapat berpindah sesi dengan geser. Ada daftar izin/blokir per sumber di pengaturan.
 - **Kontrol:** tombol play, pause, next, dan previous tampil hanya bila sesi mengaktifkan kemampuan itu; bila tidak, tombol disembunyikan dan tidak menimbulkan galat.
 - **Sampul dan progres:** sampul dari properti media sesi, dibatasi 512 px dan tidak disimpan ke disk; progres dari properti timeline sesi.
-- **Merek:** ikon sumber diambil dari aplikasi atau browser yang bersangkutan lewat shell; DevNotch tidak membawa logo YouTube Music atau Apple Music sendiri.
+- **Merek:** ikon sumber diambil dari aplikasi atau browser yang bersangkutan lewat shell; Notchi tidak membawa logo YouTube Music atau Apple Music sendiri.
 - **Batas:** sumber yang tidak mengumumkan sesi ke Windows tidak akan muncul; tombol suka dan lirik tidak tersedia karena tidak ada di API.
 
 Kriteria penerimaan:
@@ -358,7 +358,7 @@ Fase: aplikasi + kalkulator di Fase 4; berkas dan aksi pasca-1.0.
 
 | Kebutuhan | Keputusan |
 | --- | --- |
-| Format konfigurasi | `config.toml` di `%APPDATA%\DevNotch`, divalidasi terhadap skema; nilai tidak valid diganti default, tidak membuat aplikasi crash |
+| Format konfigurasi | `config.toml` di `%APPDATA%\Notchi`, divalidasi terhadap skema; nilai tidak valid diganti default, tidak membuat aplikasi crash |
 | Antarmuka pengaturan | Jendela sidebar yang dirender dengan mesin UI yang sama (tanpa framework tambahan); Fase 2. Di Fase 1 cukup file konfigurasi dengan *hot reload* |
 | Tema | Token desain (bagian 2) dapat diganti per pengguna; impor/ekspor file tema |
 | Mulai bersama Windows | Kunci `HKCU\...\Run` (pada paket MSIX: startupTask di manifest); tanpa hak admin |
@@ -598,7 +598,7 @@ Garis waktu tidak berskala; setiap fase berakhir pada gerbang yang kriterianya m
 | Artefak | Isi | Catatan |
 | --- | --- | --- |
 | Paket MSIX (utama) | Aplikasi full-trust (`runFullTrust`) dengan package identity, ditandatangani | Syarat pencerminan notifikasi aplikasi lain (`UserNotificationListener`). Dibagikan lewat Microsoft Store (ditandatangani Store) dan winget; `windows.startupTask` untuk mulai bersama Windows; diperbarui oleh Store atau App Installer. Akun pengembang Partner Center memerlukan biaya pendaftaran sekali |
-| `DevNotch.exe` portabel | Biner tunggal bertanda tangan Authenticode | Tanpa package identity, jadi tanpa pencerminan notifikasi aplikasi lain. Memakai updater minisign (bagian 7.3). Manifest tertanam: `asInvoker`, DPI PerMonitorV2, `longPathAware`, `supportedOS`; ikon dan info versi lewat `build.rs` (crate pembangun ikut diaudit) |
+| `Notchi.exe` portabel | Biner tunggal bertanda tangan Authenticode | Tanpa package identity, jadi tanpa pencerminan notifikasi aplikasi lain. Memakai updater minisign (bagian 7.3). Manifest tertanam: `asInvoker`, DPI PerMonitorV2, `longPathAware`, `supportedOS`; ikon dan info versi lewat `build.rs` (crate pembangun ikut diaudit) |
 | Paket winget | Manifest untuk `winget install` | Mengarah ke paket MSIX atau exe bertanda tangan |
 | Metadata rilis | SHA-256, SBOM CycloneDX, catatan rilis, `THIRD_PARTY_LICENSES` | Dihasilkan otomatis oleh CI |
 
@@ -641,7 +641,7 @@ Garis waktu tidak berskala; setiap fase berakhir pada gerbang yang kriterianya m
 
 ### 9.6 Pertanyaan terbuka
 
-1. Apakah nama "DevNotch" sudah final? Perlu pengecekan merek dagang sebelum rilis publik di Store.
+1. Apakah nama "Notchi" sudah final? Perlu pengecekan merek dagang sebelum rilis publik di Store.
 2. Siapa pemilik akun Partner Center dan sertifikat penandatanganan (pribadi atau organisasi)?
 3. Siapa yang menggambar aset Notchi (sendiri, ilustrator, atau dibantu alat desain)? Palet di bagian 2.6 masih nilai awal.
 4. Apakah MIT sudah sesuai, atau lebih cocok Apache-2.0 (ada hibah paten) atau lisensi copyleft (menjaga turunan tetap terbuka)?
@@ -649,13 +649,13 @@ Garis waktu tidak berskala; setiap fase berakhir pada gerbang yang kriterianya m
 
 ### 9.7 Lisensi dan tata kelola open source
 
-DevNotch gratis dan sumber terbuka: kode berlisensi MIT, aset seni dan maskot berlisensi CC BY 4.0. Pilihan MIT dapat diganti sebelum rilis publik pertama, misalnya ke Apache-2.0 bila hibah paten dibutuhkan.
+Notchi gratis dan sumber terbuka: kode berlisensi MIT, aset seni dan maskot berlisensi CC BY 4.0. Pilihan MIT dapat diganti sebelum rilis publik pertama, misalnya ke Apache-2.0 bila hibah paten dibutuhkan.
 
 | Objek | Lisensi atau aturan | Catatan |
 | --- | --- | --- |
 | Kode sumber | MIT | Berkas `LICENSE` di akar repositori; "Copyright (c) 2026 devaldicaliesta" |
-| Maskot Notchi, ikon, tema | CC BY 4.0 | Wajib atribusi; nama dan logo tidak termasuk |
-| Nama "DevNotch" dan logo | Di luar lisensi kode | Kebijakan merek di `TRADEMARKS.md`: fork dipersilakan tetapi memakai nama lain |
+| Gambar maskot Notchi, ikon, tema | CC BY 4.0 | Wajib atribusi; nama "Notchi" dan logo tidak termasuk |
+| Nama "Notchi" dan logo | Di luar lisensi kode | Kebijakan merek di `TRADEMARKS.md`: fork dipersilakan tetapi memakai nama lain |
 | Dependensi | Hanya MIT, Apache-2.0, BSD, ISC, Unicode, dan OFL | Ditegakkan `cargo deny`; `THIRD_PARTY_LICENSES` dihasilkan otomatis |
 | Font Inter | SIL OFL 1.1 | Salinan lisensi disertakan dalam paket |
 | Kontribusi | DCO sign-off, tanpa CLA | `CONTRIBUTING.md` (mengacu ke Contributor Covenant 2.1) |

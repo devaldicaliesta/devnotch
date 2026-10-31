@@ -5,8 +5,8 @@ Aset seni milik proyek ini (maskot Notchi, ikon, tema, dan ilustrasi lain di fol
 
 Anda boleh membagikan dan mengadaptasi aset tersebut, termasuk untuk tujuan komersial, selama memberi atribusi yang layak:
 
-> Notchi dan aset DevNotch © 2026 devaldicaliesta, CC BY 4.0.
+> Maskot dan aset Notchi © 2026 devaldicaliesta, CC BY 4.0.
 
-Lisensi ini **tidak** mencakup nama dan logo "DevNotch"; lihat [`TRADEMARKS.md`](TRADEMARKS.md).
+Lisensi ini mencakup gambar maskot, tetapi **tidak** mencakup nama "Notchi" sebagai nama produk maupun logo proyek; lihat [`TRADEMARKS.md`](TRADEMARKS.md).
 
 Font Inter yang disertakan dalam paket berlisensi SIL Open Font License 1.1 dan mengikuti lisensinya sendiri.

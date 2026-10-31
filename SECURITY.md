@@ -4,7 +4,7 @@
 
 Jangan membuka issue publik untuk kerentanan. Gunakan **GitHub Security Advisories** pada tab *Security* di repositori ini ("Report a vulnerability").
 
-Kami menargetkan respons awal dalam 72 jam. Sertakan langkah reproduksi, versi DevNotch, dan versi Windows.
+Kami menargetkan respons awal dalam 72 jam. Sertakan langkah reproduksi, versi Notchi, dan versi Windows.
 
 ## Cakupan
 
