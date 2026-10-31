@@ -21,10 +21,6 @@ toml = { version = "1", default-features = false, features = ["parse", "serde", 
 unsafe_op_in_unsafe_fn = "deny"
 missing_debug_implementations = "warn"
 
-[workspace.lints.clippy]
-undocumented_unsafe_blocks = "deny"
-
-# PRD §6.4: profil rilis hemat ukuran; `core` dioptimalkan penuh.
 [profile.release]
 opt-level = "s"
 lto = "fat"

@@ -1,5 +1,3 @@
-//! Geometri dalam satuan dp (device-independent pixel, 1 dp = 1 px pada 96 DPI).
-
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Size {
     pub w: f32,
@@ -11,7 +9,6 @@ impl Size {
         Self { w, h }
     }
 
-    /// Ukuran terkecil yang memuat `self` dan `other`.
     pub fn union(self, other: Size) -> Size {
         Size::new(self.w.max(other.w), self.h.max(other.h))
     }
@@ -54,13 +51,11 @@ impl Rect {
         Size::new(self.w, self.h)
     }
 
-    /// Memperluas persegi ke segala arah (nilai negatif menyusutkan).
     pub fn inflate(&self, d: f32) -> Rect {
         Rect::new(self.x - d, self.y - d, self.w + 2.0 * d, self.h + 2.0 * d)
     }
 }
 
-/// Skala dari dp ke piksel fisik untuk DPI tertentu.
 pub fn scale_for_dpi(dpi: u32) -> f32 {
     dpi.max(1) as f32 / 96.0
 }

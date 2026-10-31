@@ -1,10 +1,3 @@
-//! Alert pengisian daya dan baterai rendah (PRD §3.2).
-//!
-//! Alert muncul saat kabel dicolok/dicabut dan ketika baterai turun melewati
-//! ambang (default 20% dan 10%). Ambang dipersenjatai ulang setelah
-//! perangkat diisi daya.
-
-/// Pembacaan status daya dari sistem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerReading {
     pub has_battery: bool,
@@ -21,10 +14,8 @@ pub enum PowerEvent {
 
 #[derive(Debug, Clone)]
 pub struct BatteryMonitor {
-    /// Ambang terurut menurun, misalnya `[20, 10]`.
     thresholds: Vec<u8>,
     last: Option<PowerReading>,
-    /// Ambang terendah yang sudah memicu alert sejak terakhir diisi daya.
     fired_down_to: Option<u8>,
 }
 
@@ -40,7 +31,6 @@ impl BatteryMonitor {
         self.last
     }
 
-    /// Baterai di bawah ambang tertinggi dan tidak sedang diisi.
     pub fn is_low(&self) -> bool {
         match (self.last, self.thresholds.first()) {
             (Some(r), Some(&hi)) => r.has_battery && !r.ac_online && r.percent.is_some_and(|p| p <= hi),
@@ -70,7 +60,6 @@ impl BatteryMonitor {
             return None;
         }
         let percent = r.percent?;
-        // Ambang terendah yang sudah terlewati.
         let crossed = self.thresholds.iter().copied().filter(|&t| percent <= t).min()?;
         if self.fired_down_to.is_some_and(|f| f <= crossed) {
             return None;
@@ -107,7 +96,6 @@ mod tests {
         assert!(m.is_low());
         assert_eq!(m.update(bat(false, 10)), Some(PowerEvent::Low { percent: 10, critical: true }));
         assert_eq!(m.update(bat(false, 9)), None);
-        // Diisi lalu dicabut: ambang dipersenjatai ulang.
         m.update(bat(true, 9));
         m.update(bat(false, 9));
         assert_eq!(m.update(bat(false, 8)), Some(PowerEvent::Low { percent: 8, critical: true }));

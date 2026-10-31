@@ -1,9 +1,3 @@
-//! Model sesi media (PRD §3.6).
-//!
-//! Snapshot diisi oleh `platform-win` dari kontrol media sistem Windows
-//! (`GlobalSystemMediaTransportControlsSessionManager`); modul ini tidak
-//! tahu apa pun tentang WinRT.
-
 use crate::Ms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -17,7 +11,6 @@ pub enum PlaybackStatus {
     Paused,
 }
 
-/// Kemampuan yang diaktifkan sesi; tombol tanpa kemampuan disembunyikan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Controls {
     pub play: bool,
@@ -30,11 +23,9 @@ pub struct Controls {
 pub struct Timeline {
     pub position: Ms,
     pub end: Ms,
-    /// Waktu monoton saat posisi di atas dilaporkan.
     pub reported_at: Ms,
 }
 
-/// Sampul album dalam BGRA premultiplied, sudah diperkecil (≤ 512 px).
 #[derive(Clone, PartialEq, Eq)]
 pub struct Artwork {
     pub width: u32,
@@ -59,7 +50,6 @@ pub struct MediaSnapshot {
     pub timeline: Option<Timeline>,
     pub session_index: usize,
     pub session_count: usize,
-    /// Nomor yang berubah setiap kali lagu berganti, untuk menyegarkan sampul.
     pub track_id: u64,
 }
 
@@ -73,7 +63,6 @@ impl MediaSnapshot {
             && matches!(self.status, PlaybackStatus::Playing | PlaybackStatus::Paused)
     }
 
-    /// Posisi saat `now`, diekstrapolasi bila sedang diputar.
     pub fn position_at(&self, now: Ms) -> Option<Ms> {
         let t = self.timeline?;
         if t.end == 0 {
@@ -95,9 +84,32 @@ impl MediaSnapshot {
     pub fn source_name(&self) -> String {
         source_display_name(&self.source_app_id)
     }
+
+    pub fn same_as(&self, other: &MediaSnapshot, now: Ms, tolerance: Ms) -> bool {
+        let fields = self.source_app_id == other.source_app_id
+            && self.title == other.title
+            && self.artist == other.artist
+            && self.album == other.album
+            && self.status == other.status
+            && self.controls == other.controls
+            && self.session_index == other.session_index
+            && self.session_count == other.session_count
+            && self.track_id == other.track_id;
+        let timeline = match (self.timeline, other.timeline) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                a.end == b.end
+                    && match (self.position_at(now), other.position_at(now)) {
+                        (Some(x), Some(y)) => x.abs_diff(y) < tolerance,
+                        _ => a.position == b.position,
+                    }
+            }
+            _ => false,
+        };
+        fields && timeline
+    }
 }
 
-/// Nama sumber yang ramah dari `SourceAppUserModelId`, hanya untuk tampilan.
 pub fn source_display_name(aumid: &str) -> String {
     let lower = aumid.to_ascii_lowercase();
     let known: &[(&str, &str)] = &[
@@ -117,7 +129,6 @@ pub fn source_display_name(aumid: &str) -> String {
     if let Some((_, name)) = known.iter().find(|(k, _)| lower.contains(k)) {
         return (*name).to_string();
     }
-    // AUMID paket: "Penerbit.Nama_hash!App" → "Nama".
     let base = aumid.split('!').next().unwrap_or(aumid);
     let base = base.split('_').next().unwrap_or(base);
     let base = base.strip_suffix(".exe").or_else(|| base.strip_suffix(".EXE")).unwrap_or(base);
@@ -126,7 +137,6 @@ pub fn source_display_name(aumid: &str) -> String {
     if base.is_empty() { "Media".to_string() } else { base.to_string() }
 }
 
-/// Daftar izin/blokir per sumber (cocok sebagian, tanpa peka huruf besar).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceFilter {
     pub allow: Vec<String>,
@@ -144,8 +154,6 @@ impl SourceFilter {
     }
 }
 
-/// Menentukan apakah media dihitung sebagai aktivitas: selama diputar, dan
-/// sebentar setelah dijeda agar Island tidak tertahan oleh tab yang dijeda.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MediaPresence {
     paused_since: Option<Ms>,
@@ -190,6 +198,20 @@ mod tests {
             timeline: Some(Timeline { position: 10_000, end: 200_000, reported_at: 1_000 }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn laporan_posisi_rutin_dibuang() {
+        let a = snap(PlaybackStatus::Playing);
+        let mut b = a.clone();
+        b.timeline = Some(Timeline { position: 15_200, end: 200_000, reported_at: 6_000 });
+        assert!(a.same_as(&b, 6_000, 1_500));
+        b.timeline = Some(Timeline { position: 90_000, end: 200_000, reported_at: 6_000 });
+        assert!(!a.same_as(&b, 6_000, 1_500));
+        assert!(!a.same_as(&snap(PlaybackStatus::Paused), 1_000, 1_500));
+        let mut c = a.clone();
+        c.title = "Lain".into();
+        assert!(!a.same_as(&c, 1_000, 1_500));
     }
 
     #[test]

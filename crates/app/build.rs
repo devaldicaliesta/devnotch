@@ -1,6 +1,3 @@
-//! Menanam manifest aplikasi (PRD §9.2): `asInvoker`, DPI PerMonitorV2,
-//! `longPathAware`, dan `supportedOS`, tanpa memerlukan `rc.exe`.
-
 use embed_manifest::manifest::{ActiveCodePage, DpiAwareness, ExecutionLevel, MaxVersionTested, Setting};
 use embed_manifest::{embed_manifest, new_manifest};
 

@@ -1,9 +1,3 @@
-//! Ukuran dan tata letak Island dalam dp (PRD §3.1).
-//!
-//! Angka-angka ini adalah token awal yang meniru proporsi pada iPhone dan
-//! akan dikalibrasi ulang; semua posisi kartu relatif terhadap sudut kiri
-//! atas pil.
-
 use crate::geom::{Point, Rect, Size};
 use crate::island::AlertKind;
 
@@ -18,16 +12,12 @@ pub const EXPANDED_MIN_H: f32 = 84.0;
 pub const EXPANDED_MAX_H: f32 = 200.0;
 pub const HUD: Size = Size::new(200.0, 37.0);
 pub const HOVER_SCALE: f32 = 1.05;
-/// Radius maksimum kartu; pil memakai busur lingkaran (tinggi / 2).
 pub const MAX_RADIUS: f32 = 40.0;
-/// Ruang kosong di sekitar pil di dalam jendela (untuk skala hover).
 pub const WINDOW_PAD: f32 = 12.0;
 pub const PAD: f32 = 18.0;
 
-/// Isi kartu Expanded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Card {
-    /// Kartu beranda saat tidak ada aktivitas: maskot, jam, timer cepat.
     Home,
     Media,
     Timer,
@@ -53,17 +43,14 @@ pub fn alert_size(alert: &AlertKind) -> Size {
     if alert.is_hud() { HUD } else { Size::new(EXPANDED_W, EXPANDED_MIN_H) }
 }
 
-/// Lebar compact mengikuti isi, dibatasi 160–240 dp.
 pub fn compact_size(content_w: f32) -> Size {
     Size::new(content_w.clamp(COMPACT_MIN_W, COMPACT_MAX_W), PILL_H)
 }
 
-/// Radius sudut untuk ukuran pil/kartu tertentu.
 pub fn corner_radius(size: Size) -> f32 {
     (size.h / 2.0).min(MAX_RADIUS)
 }
 
-/// Bentuk yang digambar: pil utama dan (pada Minimal) gelembung kedua.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shape {
     pub main: Size,
@@ -79,33 +66,54 @@ impl Shape {
         if self.bubble { self.main.w + BUBBLE_GAP + BUBBLE.w } else { self.main.w }
     }
 
-    /// Posisi pil utama di dalam jendela selebar `window_w`.
-    pub fn main_rect(&self, window_w: f32, top: f32) -> Rect {
+    pub fn main_rect(&self, window_w: f32) -> Rect {
         let x = (window_w - self.total_width()) / 2.0;
-        Rect::new(x, top, self.main.w, self.main.h)
+        Rect::new(x, 0.0, self.main.w, self.main.h)
     }
 
-    pub fn bubble_rect(&self, window_w: f32, top: f32) -> Option<Rect> {
+    pub fn bubble_rect(&self, window_w: f32) -> Option<Rect> {
         self.bubble.then(|| {
-            let m = self.main_rect(window_w, top);
-            Rect::new(m.x + m.w + BUBBLE_GAP, top, BUBBLE.w, BUBBLE.h)
+            let m = self.main_rect(window_w);
+            Rect::new(m.x + m.w + BUBBLE_GAP, 0.0, BUBBLE.w, BUBBLE.h)
         })
+    }
+
+    pub fn retracted(&self) -> Shape {
+        Shape::single(Size::new((self.total_width() * LIP_RATIO).max(LIP_MIN_W).round(), LIP))
     }
 }
 
-/// Ukuran jendela yang cukup untuk semua bentuk yang diberikan (bentuk lama
-/// dan baru selama transisi), termasuk ruang untuk skala hover.
-pub fn window_size(shapes: &[Shape], top_margin: f32) -> Size {
+pub const FILLET: f32 = 10.0;
+pub const LIP: f32 = 4.0;
+const LIP_RATIO: f32 = 0.5;
+const LIP_MIN_W: f32 = 56.0;
+pub const NEAR_X: f32 = 40.0;
+pub const NEAR_Y: f32 = 10.0;
+
+pub fn near_zone(shape: &Shape) -> Size {
+    Size::new((shape.total_width() + 2.0 * NEAR_X).ceil(), NEAR_Y)
+}
+
+pub fn hit_box(shapes: &[Shape]) -> Size {
     let (w, h) = shapes
         .iter()
         .fold((0.0f32, 0.0f32), |(w, h), s| (w.max(s.total_width()), h.max(s.main.h)));
     Size::new(
-        (w * HOVER_SCALE + 2.0 * WINDOW_PAD).ceil(),
-        (top_margin + h * HOVER_SCALE + WINDOW_PAD).ceil(),
+        (w * HOVER_SCALE + 2.0 * (WINDOW_PAD + FILLET)).ceil(),
+        (h * HOVER_SCALE + WINDOW_PAD).ceil(),
     )
 }
 
-/// Tombol yang dapat diklik di dalam kartu.
+pub fn union(a: Size, b: Size) -> Size {
+    Size::new(a.w.max(b.w), a.h.max(b.h))
+}
+
+pub fn window_max() -> Size {
+    let card = Shape::single(Size::new(EXPANDED_W, EXPANDED_MAX_H));
+    let minimal = Shape { main: compact_size(COMPACT_MAX_W), bubble: true };
+    union(hit_box(&[card, minimal]), near_zone(&card))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
     Prev,
@@ -117,12 +125,10 @@ pub enum Button {
     StopwatchPauseResume,
     StopwatchReset,
     StopwatchStop,
-    /// Mulai timer dengan preset ke-`n` dari konfigurasi.
     Preset(u8),
     StartStopwatch,
 }
 
-/// Tata letak kartu media (371 × 168).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaCard {
     pub art: Rect,
@@ -160,7 +166,6 @@ pub fn media_card() -> MediaCard {
     }
 }
 
-/// Tata letak kartu timer atau stopwatch (371 × 112).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimerCard {
     pub mascot: Rect,
@@ -200,7 +205,6 @@ pub fn timer_card(stopwatch: bool) -> TimerCard {
     }
 }
 
-/// Tata letak kartu beranda (371 × 132).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HomeCard {
     pub mascot: Rect,
@@ -209,7 +213,6 @@ pub struct HomeCard {
     pub buttons: Vec<(Button, Rect)>,
 }
 
-/// `presets` adalah jumlah preset timer yang ditampilkan (maks. 5).
 pub fn home_card(presets: usize) -> HomeCard {
     let w = EXPANDED_W;
     let mascot = Rect::new(PAD + 2.0, PAD, 52.0, 52.0);
@@ -233,7 +236,6 @@ pub fn home_card(presets: usize) -> HomeCard {
     }
 }
 
-/// Tata letak kartu alert (371 × 84) dan HUD (200 × 37).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlertCard {
     pub mascot: Rect,
@@ -254,16 +256,13 @@ pub fn alert_card() -> AlertCard {
     }
 }
 
-/// Slot kiri dan kanan pada pil compact.
 pub fn compact_slots(size: Size) -> (Rect, Rect) {
     let s = 25.0;
     let y = (size.h - s) / 2.0;
     (Rect::new(8.0, y, s, s), Rect::new(size.w - 12.0 - s, y, s, s))
 }
 
-/// Tombol yang terkena titik `p` (koordinat relatif kartu).
 pub fn hit(buttons: &[(Button, Rect)], p: Point) -> Option<Button> {
-    // Area sentuh diperluas 4 dp agar mudah diklik dan disentuh.
     buttons.iter().find(|(_, r)| r.inflate(4.0).contains(p)).map(|(b, _)| *b)
 }
 
@@ -296,19 +295,38 @@ mod tests {
     fn minimal_terpusat_dengan_gelembung() {
         let s = Shape { main: Size::new(160.0, 37.0), bubble: true };
         let win = 400.0;
-        let m = s.main_rect(win, 8.0);
-        let b = s.bubble_rect(win, 8.0).unwrap();
+        let m = s.main_rect(win);
+        let b = s.bubble_rect(win).unwrap();
         assert_eq!(b.x + b.w - m.x, s.total_width());
         assert!(((m.x) - (win - (b.x + b.w))).abs() < 0.01, "harus simetris");
+        assert_eq!((m.y, b.y), (0.0, 0.0), "menempel di tepi atas");
     }
 
     #[test]
-    fn jendela_memuat_bentuk_terbesar() {
+    fn region_memuat_bentuk_terbesar() {
         let a = Shape::single(IDLE);
         let b = Shape::single(Card::Media.size());
-        let w = window_size(&[a, b], 8.0);
-        assert!(w.w >= EXPANDED_W * HOVER_SCALE);
-        assert!(w.h >= 8.0 + Card::Media.height() * HOVER_SCALE);
+        let w = hit_box(&[a, b]);
+        assert!(w.w >= EXPANDED_W * HOVER_SCALE + 2.0 * FILLET);
+        assert!(w.h >= Card::Media.height() * HOVER_SCALE);
+        let max = window_max();
+        assert!(max.w >= w.w && max.h >= w.h, "jendela tetap memuat semua region");
+        assert!(max.w >= near_zone(&b).w);
+    }
+
+    #[test]
+    fn bibir_dan_zona_dekat() {
+        let s = Shape::single(compact_size(200.0));
+        let r = s.retracted();
+        assert_eq!(r.main.h, LIP, "hanya bibir yang terlihat");
+        assert!(r.main.w < s.main.w && !r.bubble);
+        let m = Shape { main: compact_size(0.0), bubble: true };
+        assert!(m.retracted().main.w <= m.total_width());
+        let z = near_zone(&s);
+        assert!(z.w > s.total_width() && z.h >= LIP);
+        assert!(near_zone(&m).w > m.total_width());
+        let open = union(hit_box(&[s]), near_zone(&s));
+        assert!(open.w >= z.w && open.h >= z.h);
     }
 
     #[test]

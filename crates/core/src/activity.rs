@@ -1,10 +1,3 @@
-//! Aktivitas live dan aturan prioritas (PRD §3.4).
-//!
-//! Urutan: (P0) mikrofon/kamera, (P1) alert sistem, (P2) timer,
-//! (P3) media, (P4) unduhan dan lainnya. Dua aktivitas teratas tampil sebagai
-//! Minimal; sisanya masuk carousel yang bisa digeser.
-
-/// Prioritas; angka lebih kecil berarti lebih penting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Priority {
     P0 = 0,
@@ -14,7 +7,6 @@ pub enum Priority {
     P4 = 4,
 }
 
-/// Jenis aktivitas yang dapat tampil di Island. Satu instans per jenis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActivityKind {
     Privacy,
@@ -35,11 +27,8 @@ impl ActivityKind {
     }
 }
 
-/// Himpunan aktivitas yang sedang berjalan, terurut menurut prioritas lalu
-/// waktu mulai, dengan rotasi carousel dari geseran pengguna.
 #[derive(Debug, Clone, Default)]
 pub struct Activities {
-    /// Nomor urut masuk dipakai sebagai pemecah seri.
     items: Vec<(ActivityKind, u64)>,
     seq: u64,
     rotation: usize,
@@ -50,8 +39,6 @@ impl Activities {
         Self::default()
     }
 
-    /// Menandai aktivitas berjalan atau berhenti. Mengembalikan `true` bila
-    /// himpunan berubah.
     pub fn set(&mut self, kind: ActivityKind, running: bool) -> bool {
         let pos = self.items.iter().position(|(k, _)| *k == kind);
         match (pos, running) {
@@ -84,7 +71,6 @@ impl Activities {
         self.items.is_empty()
     }
 
-    /// Urutan tampil: P0 selalu di depan; sisanya dirotasi oleh carousel.
     pub fn ordered(&self) -> Vec<ActivityKind> {
         let (pinned, rest): (Vec<_>, Vec<_>) =
             self.items.iter().map(|(k, _)| *k).partition(|k| k.priority() == Priority::P0);
@@ -104,7 +90,6 @@ impl Activities {
         self.ordered().get(1).copied()
     }
 
-    /// Geser carousel ke aktivitas berikutnya (`+1`) atau sebelumnya (`-1`).
     pub fn rotate(&mut self, step: i32) {
         let n = self.items.iter().filter(|(k, _)| k.priority() != Priority::P0).count();
         if n < 2 {

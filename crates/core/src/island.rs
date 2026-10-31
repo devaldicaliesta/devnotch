@@ -1,21 +1,11 @@
-//! State machine Island (PRD §3.1).
-//!
-//! State normal (Idle, Compact, Minimal, Expanded) disimpan terpisah dari
-//! interupsi (Alert, layar penuh), sehingga setelah interupsi selesai Island
-//! otomatis kembali ke state sebelumnya.
-
 use crate::Ms;
 use crate::activity::Priority;
 
-/// Mode tampil Island (PRD §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DisplayMode {
-    /// Selalu tampil, termasuk pil kosong saat idle.
     Always,
-    /// Hanya saat ada aktivitas (default).
     #[default]
     ActivityOnly,
-    /// Muncul saat kursor berada di area Island.
     Hover,
 }
 
@@ -36,7 +26,6 @@ impl DisplayMode {
     }
 }
 
-/// Peristiwa singkat yang menyela state normal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AlertKind {
     Charging { percent: Option<u8> },
@@ -55,7 +44,6 @@ impl AlertKind {
         }
     }
 
-    /// Lama alert tampil (PRD: 3–5 detik; HUD volume lebih singkat).
     pub fn duration(&self) -> Ms {
         match self {
             AlertKind::Volume { .. } => 1_500,
@@ -64,7 +52,6 @@ impl AlertKind {
         }
     }
 
-    /// HUD kecil (bentuk compact) atau kartu alert besar.
     pub fn is_hud(&self) -> bool {
         matches!(self, AlertKind::Volume { .. })
     }
@@ -76,7 +63,6 @@ struct ActiveAlert {
     until: Ms,
 }
 
-/// Apa yang harus digambar saat ini.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Presentation {
     Hidden,
@@ -96,6 +82,8 @@ pub struct Island {
     fullscreen: bool,
     hover: bool,
     snoozed_until: Option<Ms>,
+    autohide: bool,
+    peek_until: Option<Ms>,
 }
 
 impl Island {
@@ -108,7 +96,28 @@ impl Island {
             fullscreen: false,
             hover: false,
             snoozed_until: None,
+            autohide: false,
+            peek_until: None,
         }
+    }
+
+    pub fn set_autohide(&mut self, on: bool) {
+        self.autohide = on;
+    }
+
+    pub fn autohide(&self) -> bool {
+        self.autohide
+    }
+
+    pub fn peek(&mut self, until: Ms) {
+        self.peek_until = Some(self.peek_until.map_or(until, |p| p.max(until)));
+    }
+
+    pub fn is_retracted(&self, now: Ms) -> bool {
+        if !self.autohide || self.hover || self.peek_until.is_some_and(|t| now < t) {
+            return false;
+        }
+        matches!(self.presentation(now), Presentation::Idle | Presentation::Compact | Presentation::Minimal)
     }
 
     pub fn mode(&self) -> DisplayMode {
@@ -127,11 +136,10 @@ impl Island {
         if self.fullscreen || self.snoozed_until.is_some_and(|t| now < t) {
             return Presentation::Hidden;
         }
-        if let Some(a) = &self.alert {
-            if now < a.until {
+        if let Some(a) = &self.alert
+            && now < a.until {
                 return Presentation::Alert(a.kind.clone());
             }
-        }
         if self.expanded {
             return Presentation::Expanded;
         }
@@ -170,7 +178,6 @@ impl Island {
         self.fullscreen
     }
 
-    /// Klik: expand/collapse. Mengklik alert menutupnya lalu membuka kartu.
     pub fn click(&mut self, now: Ms) {
         if self.alert_active(now) {
             self.alert = None;
@@ -180,24 +187,20 @@ impl Island {
         }
     }
 
-    /// Tahan 350 ms.
     pub fn long_press(&mut self) {
         self.expanded = true;
     }
 
-    /// Esc, klik di luar, atau kursor lama meninggalkan kartu.
     pub fn collapse(&mut self) {
         self.expanded = false;
     }
 
-    /// Hotkey global: buka/tutup tanpa mouse, juga membatalkan snooze.
     pub fn hotkey(&mut self) {
         self.snoozed_until = None;
         self.alert = None;
         self.expanded = !self.expanded;
     }
 
-    /// "Sembunyikan 1 jam".
     pub fn snooze(&mut self, until: Ms) {
         self.snoozed_until = Some(until);
         self.expanded = false;
@@ -211,14 +214,11 @@ impl Island {
         self.snoozed_until = None;
     }
 
-    /// Menampilkan alert. Alert baru hanya menggantikan alert aktif yang
-    /// prioritasnya sama atau lebih tinggi.
     pub fn push_alert(&mut self, kind: AlertKind, now: Ms) -> bool {
-        if let Some(cur) = &self.alert {
-            if now < cur.until && kind.priority() > cur.kind.priority() {
+        if let Some(cur) = &self.alert
+            && now < cur.until && kind.priority() > cur.kind.priority() {
                 return false;
             }
-        }
         let until = now + kind.duration();
         self.alert = Some(ActiveAlert { kind, until });
         true
@@ -232,8 +232,6 @@ impl Island {
         self.alert.as_ref().is_some_and(|a| now < a.until)
     }
 
-    /// Membuang alert dan snooze yang kedaluwarsa. Mengembalikan `true` bila
-    /// presentasi berubah karenanya.
     pub fn tick(&mut self, now: Ms) -> bool {
         let mut changed = false;
         if self.alert.as_ref().is_some_and(|a| now >= a.until) {
@@ -244,16 +242,15 @@ impl Island {
             self.snoozed_until = None;
             changed = true;
         }
+        if self.peek_until.is_some_and(|t| now >= t) {
+            self.peek_until = None;
+            changed = true;
+        }
         changed
     }
 
-    /// Waktu terdekat ketika [`Island::tick`] perlu dipanggil.
     pub fn next_deadline(&self) -> Option<Ms> {
-        let a = self.alert.as_ref().map(|a| a.until);
-        match (a, self.snoozed_until) {
-            (Some(a), Some(s)) => Some(a.min(s)),
-            (a, s) => a.or(s),
-        }
+        [self.alert.as_ref().map(|a| a.until), self.snoozed_until, self.peek_until].into_iter().flatten().min()
     }
 }
 
@@ -322,7 +319,6 @@ mod tests {
         assert!(i.push_alert(AlertKind::LowBattery { percent: 10, critical: true }, 0));
         assert!(!i.push_alert(AlertKind::Volume { level: 30, muted: false }, 100));
         assert!(i.push_alert(charging(), 200));
-        // Setelah alert habis, alert prioritas rendah boleh tampil lagi.
         assert!(i.push_alert(AlertKind::Volume { level: 30, muted: false }, 10_000));
     }
 
@@ -358,6 +354,45 @@ mod tests {
         i.snooze(10_000_000);
         i.hotkey();
         assert_eq!(i.presentation(5), Presentation::Expanded);
+    }
+
+    #[test]
+    fn sembunyi_otomatis_ke_tepi_atas() {
+        let mut i = Island::new(DisplayMode::Always);
+        i.set_activity_count(1);
+        assert!(!i.is_retracted(0), "tanpa autohide tidak pernah masuk");
+        i.set_autohide(true);
+        assert!(i.is_retracted(0));
+        assert_eq!(i.presentation(0), Presentation::Compact, "isi tetap sama, hanya posisinya");
+        i.set_hover(true);
+        assert!(!i.is_retracted(0), "kursor mendekat: turun");
+        i.set_hover(false);
+        i.click(0);
+        assert!(!i.is_retracted(0), "kartu terbuka selalu tampil");
+        i.collapse();
+        i.push_alert(AlertKind::Charging { percent: None }, 0);
+        assert!(!i.is_retracted(100), "alert selalu menyembul");
+        assert!(i.is_retracted(3_000));
+    }
+
+    #[test]
+    fn peek_sebentar_lalu_masuk_lagi() {
+        let mut i = Island::new(DisplayMode::Always);
+        i.set_autohide(true);
+        i.peek(2_500);
+        i.peek(1_000);
+        assert!(!i.is_retracted(2_000), "peek tidak dipersingkat");
+        assert_eq!(i.next_deadline(), Some(2_500));
+        assert!(i.tick(2_500));
+        assert!(i.is_retracted(2_500));
+    }
+
+    #[test]
+    fn autohide_tidak_menampilkan_yang_tersembunyi() {
+        let mut i = Island::new(DisplayMode::ActivityOnly);
+        i.set_autohide(true);
+        assert_eq!(i.presentation(0), Presentation::Hidden);
+        assert!(!i.is_retracted(0), "tidak ada yang perlu disembunyikan");
     }
 
     #[test]

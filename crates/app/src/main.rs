@@ -1,5 +1,3 @@
-//! `Notchi.exe`: titik masuk, argumen CLI, dan wiring (PRD §6.2).
-
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
@@ -65,7 +63,6 @@ fn main() {
 
     let _hardening = init_process();
     let Some(_lock) = InstanceLock::acquire(INSTANCE) else {
-        // Sudah berjalan: minta instans pertama membuka Island.
         notify_existing_instance();
         return;
     };

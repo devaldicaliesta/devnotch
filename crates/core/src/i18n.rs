@@ -1,5 +1,3 @@
-//! String antarmuka dalam bahasa Indonesia dan Inggris (PRD §5.4).
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Lang {
     #[default]
@@ -29,6 +27,7 @@ pub enum Text {
     ModeActivity,
     ModeHover,
     MenuLaunchAtLogin,
+    MenuAutohide,
     MenuAbout,
     MenuQuit,
     Minutes,
@@ -71,6 +70,8 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, ModeActivity) => "Only during activity",
         (Lang::Id, ModeHover) => "Muncul saat hover",
         (Lang::En, ModeHover) => "Show on hover",
+        (Lang::Id, MenuAutohide) => "Sembunyi di tepi atas",
+        (Lang::En, MenuAutohide) => "Hide at top edge",
         (Lang::Id, MenuLaunchAtLogin) => "Mulai bersama Windows",
         (Lang::En, MenuLaunchAtLogin) => "Start with Windows",
         (Lang::Id, MenuAbout) => "Tentang Notchi",
@@ -125,8 +126,6 @@ const MONTHS_ID: [&str; 12] =
 const MONTHS_EN: [&str; 12] =
     ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-/// Tanggal panjang, misalnya "Sabtu, 31 Oktober". `weekday` 0 = Minggu,
-/// `month` 1–12.
 pub fn long_date(lang: Lang, weekday: u8, day: u8, month: u8) -> String {
     let w = weekday as usize % 7;
     let m = (month.clamp(1, 12) - 1) as usize;

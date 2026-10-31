@@ -1,52 +1,33 @@
-//! Fisika pegas (PRD §2.3).
-//!
-//! Preset memakai semantik `duration`/`bounce` lalu dikonversi ke pegas
-//! bermassa 1: `k = (2π/d)²`, `c = 4π(1−b)/d`. Compositor Windows menerima
-//! parameter yang sama lewat `DampingRatio = 1 − bounce` dan `Period = duration`.
-//! Integrator CPU di sini dipakai untuk pengujian dan untuk memperkirakan
-//! kapan animasi selesai; animasi sebenarnya berjalan di compositor.
-
 use core::f32::consts::PI;
 
-/// Parameter pegas dalam bentuk yang mudah dibaca desainer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpringPreset {
-    /// Durasi persepsi dalam detik.
     pub duration: f32,
-    /// 0 = tanpa pantulan, mendekati 1 = sangat memantul.
     pub bounce: f32,
 }
 
 impl SpringPreset {
-    /// Pindah konten dalam kartu, fade.
-    pub const SMOOTH: Self = Self::new(0.50, 0.00);
-    /// Magnifikasi Dock, hover.
-    pub const SNAPPY: Self = Self::new(0.40, 0.15);
-    /// Island mengembang/mengecil, bounce ikon.
-    pub const BOUNCY: Self = Self::new(0.50, 0.30);
+    pub const SMOOTH: Self = Self::new(0.32, 0.00);
+    pub const SNAPPY: Self = Self::new(0.26, 0.12);
+    pub const BOUNCY: Self = Self::new(0.38, 0.25);
 
     pub const fn new(duration: f32, bounce: f32) -> Self {
         Self { duration, bounce }
     }
 
-    /// Kekakuan `k` untuk massa 1.
     pub fn stiffness(self) -> f32 {
         let w = 2.0 * PI / self.duration;
         w * w
     }
 
-    /// Redaman `c` untuk massa 1.
     pub fn damping(self) -> f32 {
         4.0 * PI * (1.0 - self.bounce) / self.duration
     }
 
-    /// Rasio redaman ζ = c / (2√k). Untuk preset ini ζ = 1 − bounce.
     pub fn damping_ratio(self) -> f32 {
         self.damping() / (2.0 * self.stiffness().sqrt())
     }
 
-    /// Perkiraan waktu sampai simpangan tetap di bawah `tolerance`
-    /// (relatif terhadap jarak awal), dihitung dengan simulasi.
     pub fn settle_time(self, tolerance: f32) -> f32 {
         let mut s = Spring::new(self, 0.0);
         s.set_target(1.0);
@@ -64,7 +45,6 @@ impl SpringPreset {
     }
 }
 
-/// Pegas satu dimensi yang diintegrasikan di CPU.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spring {
     pub preset: SpringPreset,
@@ -82,7 +62,6 @@ impl Spring {
         self.target = target;
     }
 
-    /// Satu langkah integrasi semi-implisit Euler.
     pub fn step(&mut self, dt: f32) {
         let k = self.preset.stiffness();
         let c = self.preset.damping();
@@ -116,10 +95,11 @@ mod tests {
     }
 
     #[test]
-    fn bouncy_selesai_dalam_500_ms() {
-        // Kriteria penerimaan §3.5: animasi settle ≤ 500 ms (toleransi 2%).
-        let t = SpringPreset::BOUNCY.settle_time(0.02);
-        assert!(t <= 0.5, "settle {t} s");
+    fn semua_preset_selesai_dalam_400_ms() {
+        for p in [SpringPreset::SMOOTH, SpringPreset::SNAPPY, SpringPreset::BOUNCY] {
+            let t = p.settle_time(0.02);
+            assert!(t <= 0.4, "{p:?} settle {t} s");
+        }
     }
 
     #[test]

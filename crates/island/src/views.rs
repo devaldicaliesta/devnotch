@@ -1,16 +1,10 @@
-//! Isi Island untuk setiap state (PRD §3.1–3.2).
-//!
-//! Setiap fungsi `build_*` menggambar ke container milik pil dan
-//! mengembalikan elemen dinamis (teks hitung mundur, progres) yang
-//! diperbarui tanpa membangun ulang seluruh isi.
-
 use notchi_core::Ms;
 use notchi_core::color::{self, Color, Skin, TEXT_PRIMARY};
 use notchi_core::fmt::{countdown, elapsed};
 use notchi_core::geom::{Rect, Size};
 use notchi_core::i18n::{Lang, Text, long_date, t};
 use notchi_core::island::AlertKind;
-use notchi_core::layout::{self, Button, Card};
+use notchi_core::layout::{self, Button};
 use notchi_core::mascot::Expression;
 use notchi_core::media::{Artwork, MediaSnapshot};
 use notchi_core::timer::{Countdown, Stopwatch};
@@ -21,7 +15,6 @@ use notchi_platform_win::shell::LocalTime;
 
 use crate::ui::{Align, DynText, Ui, mascot, waveform};
 
-// Glyph Segoe Fluent Icons (font sistem Windows 11, tidak dibundel).
 pub const G_PREV: &str = "\u{E892}";
 pub const G_NEXT: &str = "\u{E893}";
 pub const G_PLAY: &str = "\u{E768}";
@@ -34,7 +27,6 @@ pub const G_MUSIC: &str = "\u{E8D6}";
 pub const G_VOLUME: &str = "\u{E767}";
 pub const G_MUTE: &str = "\u{E74F}";
 
-/// Aktivitas yang dapat mengisi slot pil.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     Media,
@@ -42,7 +34,6 @@ pub enum Slot {
     Stopwatch,
 }
 
-/// Data yang dibaca oleh view.
 #[derive(Debug, Clone, Copy)]
 pub struct Model<'a> {
     pub lang: Lang,
@@ -58,7 +49,6 @@ pub struct Model<'a> {
     pub clock: LocalTime,
 }
 
-/// Elemen dinamis dari isi yang sedang tampil.
 #[derive(Debug, Default)]
 pub struct Dyn {
     pub timer: Option<DynText>,
@@ -99,7 +89,6 @@ pub fn compact_size(slot: Slot, minimal: bool) -> Size {
     if minimal { layout::compact_size(0.0) } else { layout::compact_size(compact_width(slot)) }
 }
 
-/// Ikon kecil di slot kiri: maskot, sampul, atau glyph.
 fn left_icon(ui: &Ui, parent: &ContainerVisual, rect: Rect, slot: Slot, m: &Model<'_>) -> Result<()> {
     match (slot, m.art) {
         (Slot::Media, Some(art)) => {
@@ -143,7 +132,6 @@ pub fn build_compact(ui: &Ui, parent: &ContainerVisual, slot: Slot, size: Size, 
     Ok(())
 }
 
-/// Gelembung kecil aktivitas kedua pada state Minimal.
 pub fn build_bubble(ui: &Ui, parent: &ContainerVisual, slot: Slot, m: &Model<'_>) -> Result<()> {
     let r = Rect::new(6.0, 6.0, 25.0, 25.0);
     match (slot, m.art) {
@@ -199,8 +187,6 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
         ui.text(parent, &source, TextStyle::new(11.0, Weight::Medium, white(0.45)), lay.source, Align::Left)?;
     }
 
-    // Progres: batang isi dianimasikan linear oleh compositor sampai lagu
-    // selesai, jadi thread UI hanya bangun 1 Hz untuk teks waktu.
     if let Some(s) = snap.filter(|s| s.timeline.is_some()) {
         ui.rounded(parent, lay.progress, 2.0, white(0.2))?;
         let fill = ui.bar(parent, lay.progress, TEXT_PRIMARY)?;
@@ -226,7 +212,6 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
         };
         let (bg, fg) = button_colors(enabled);
         ui.button(parent, *r, glyph, true, bg, fg)?;
-        // Tombol yang tidak didukung sesi tidak bisa diklik (PRD §3.6).
         if enabled {
             d.buttons.push((*b, *r));
         }
@@ -339,7 +324,6 @@ pub fn build_alert(ui: &Ui, parent: &ContainerVisual, alert: &AlertKind, m: &Mod
     Ok(())
 }
 
-/// HUD volume kecil (PRD §3.2: HUD volume dan kecerahan).
 pub fn build_hud(ui: &Ui, parent: &ContainerVisual, level: u8, muted: bool, d: &mut Dyn) -> Result<()> {
     let size = layout::HUD;
     let glyph = if muted || level == 0 { G_MUTE } else { G_VOLUME };

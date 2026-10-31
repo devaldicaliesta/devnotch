@@ -1,5 +1,3 @@
-//! Timer hitung mundur dan stopwatch (PRD §3.2, aktivitas internal).
-
 use crate::Ms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,14 +6,12 @@ enum CountdownState {
     Paused { remaining: Ms },
 }
 
-/// Timer hitung mundur yang dapat dijeda dan ditambah.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Countdown {
     total: Ms,
     state: CountdownState,
 }
 
-/// Batas atas timer: 24 jam.
 pub const MAX_COUNTDOWN: Ms = 24 * 60 * 60 * 1000;
 
 impl Countdown {
@@ -35,7 +31,6 @@ impl Countdown {
         }
     }
 
-    /// Fraksi yang sudah berlalu, 0–1.
     pub fn progress(&self, now: Ms) -> f32 {
         1.0 - self.remaining(now) as f32 / self.total.max(1) as f32
     }
@@ -64,7 +59,6 @@ impl Countdown {
         if self.is_running() { self.pause(now) } else { self.resume(now) }
     }
 
-    /// Menambah waktu (misalnya +1 menit), tetap dalam batas 24 jam.
     pub fn add(&mut self, extra: Ms, now: Ms) {
         let remaining = (self.remaining(now) + extra).min(MAX_COUNTDOWN);
         self.total = self.total.max(remaining);
@@ -74,12 +68,10 @@ impl Countdown {
         };
     }
 
-    /// Kapan tampilan detik berikutnya berubah, atau kapan timer selesai.
     pub fn next_tick(&self, now: Ms) -> Option<Ms> {
         match self.state {
             CountdownState::Running { end } if end > now => {
                 let rem = end - now;
-                // Tampilan dibulatkan ke atas, jadi berubah tepat di batas detik.
                 let to_boundary = match rem % 1000 {
                     0 => 1000,
                     r => r,
@@ -91,7 +83,6 @@ impl Countdown {
     }
 }
 
-/// Stopwatch sederhana.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Stopwatch {
     accumulated: Ms,

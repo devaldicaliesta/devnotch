@@ -1,15 +1,9 @@
-//! Parser hotkey seperti `"Ctrl+Alt+N"`.
-//!
-//! Kode tombol memakai nilai virtual-key Windows sebagai angka biasa, jadi
-//! modul ini tetap Rust murni.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hotkey {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
     pub win: bool,
-    /// Kode virtual-key Windows.
     pub vk: u16,
 }
 

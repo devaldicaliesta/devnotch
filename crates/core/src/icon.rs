@@ -1,13 +1,7 @@
-//! Rasterizer kecil untuk ikon Notchi (tray dan berkas ikon).
-//!
-//! Bentuknya sama dengan maskot di Island: tubuh bulat lunak berwarna skin
-//! dengan dua mata titik. Antialiasing memakai supersampling 4×4.
-
 use crate::color::{Color, Skin};
 
 const EYE: Color = Color::rgb(0x141414);
 
-/// Jarak bertanda ke persegi bersudut bulat yang berpusat di `(cx, cy)`.
 fn rounded_rect_sdf(x: f32, y: f32, cx: f32, cy: f32, hw: f32, hh: f32, r: f32) -> f32 {
     let qx = (x - cx).abs() - (hw - r);
     let qy = (y - cy).abs() - (hh - r);
@@ -22,7 +16,6 @@ fn ellipse_inside(x: f32, y: f32, cx: f32, cy: f32, rx: f32, ry: f32) -> bool {
     dx * dx + dy * dy <= 1.0
 }
 
-/// Ikon maskot berukuran `size × size` dalam RGBA lurus (tidak premultiplied).
 pub fn mascot_rgba(size: u32, skin: Skin) -> Vec<u8> {
     let s = size as f32;
     let body = skin.color();
@@ -51,7 +44,6 @@ pub fn mascot_rgba(size: u32, skin: Skin) -> Vec<u8> {
             if body_hits == 0 {
                 continue;
             }
-            // Warna rata-rata antara tubuh dan mata pada piksel ini.
             let e = eye_hits as f32 / body_hits as f32;
             let mix = |a: u8, b: u8| (a as f32 * (1.0 - e) + b as f32 * e).round() as u8;
             let i = ((py * size + px) * 4) as usize;

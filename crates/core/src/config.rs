@@ -1,21 +1,13 @@
-//! Konfigurasi `config.toml` (PRD §5.4).
-//!
-//! Setiap nilai divalidasi sendiri-sendiri: nilai yang tidak valid diganti
-//! default dan dicatat sebagai peringatan, sehingga satu salah ketik tidak
-//! mengatur ulang seluruh berkas dan tidak pernah membuat aplikasi crash.
-
 use crate::color::Skin;
 use crate::hotkey::Hotkey;
 use crate::i18n::Lang;
 use crate::island::DisplayMode;
 use toml::{Table, Value};
 
-/// Berkas yang lebih besar dari ini ditolak seluruhnya.
 pub const MAX_CONFIG_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReduceMotion {
-    /// Mengikuti pengaturan Windows "Animation effects".
     #[default]
     System,
     On,
@@ -26,8 +18,8 @@ pub enum ReduceMotion {
 pub struct IslandConfig {
     pub mode: DisplayMode,
     pub hotkey: Hotkey,
-    pub top_margin: f32,
     pub hide_in_fullscreen: bool,
+    pub autohide: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +58,7 @@ pub struct Config {
     pub power: PowerConfig,
     pub timer: TimerConfig,
     pub reduce_motion: ReduceMotion,
+    pub liquid: bool,
     pub launch_at_login: bool,
 }
 
@@ -76,10 +69,10 @@ impl Default for Config {
         Self {
             language: Lang::Id,
             island: IslandConfig {
-                mode: DisplayMode::ActivityOnly,
+                mode: DisplayMode::Always,
                 hotkey: Hotkey::parse(DEFAULT_HOTKEY).expect("hotkey default valid"),
-                top_margin: 8.0,
                 hide_in_fullscreen: true,
+                autohide: true,
             },
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
             media: MediaConfig {
@@ -92,12 +85,12 @@ impl Default for Config {
             power: PowerConfig { enabled: true, low_thresholds: vec![20, 10] },
             timer: TimerConfig { presets_minutes: vec![1, 5, 10, 25], sound: true },
             reduce_motion: ReduceMotion::System,
+            liquid: true,
             launch_at_login: false,
         }
     }
 }
 
-/// Berkas awal yang ditulis saat pertama kali dijalankan.
 pub const DEFAULT_TOML: &str = r#"# Pengaturan Notchi. Berkas ini dimuat ulang otomatis setelah disimpan.
 # Nilai yang tidak valid diganti default; aplikasi tidak akan crash.
 
@@ -106,12 +99,14 @@ language = "id"
 
 [island]
 # "always" (selalu tampil), "activity" (hanya saat ada aktivitas), atau "hover".
-mode = "activity"
+mode = "always"
 # Buka/tutup Island tanpa mouse.
 hotkey = "Ctrl+Alt+N"
-# Jarak pil dari tepi atas layar, dalam dp (0–48).
-top_margin = 8
 hide_in_fullscreen = true
+# Pil menempel di tepi atas layar. Dengan autohide, pil masuk ke tepi dan
+# hanya menyisakan bibir tipis; ia turun saat kursor didekatkan ke notch.
+# Alert dan aktivitas baru tetap menyembul sebentar.
+autohide = true
 
 [mascot]
 enabled = true
@@ -142,6 +137,9 @@ sound = true
 [motion]
 # "system" mengikuti Windows, "on" selalu tanpa animasi pegas, "off" selalu beranimasi.
 reduce = "system"
+# Efek cairan: lengkung cekung di pertemuan pil dengan tepi atas layar dan
+# pantulan saat pil turun.
+liquid = true
 
 [startup]
 launch_at_login = false
@@ -278,12 +276,12 @@ impl<'a> Reader<'a> {
 }
 
 const KNOWN: &[(&str, &[&str])] = &[
-    ("island", &["mode", "hotkey", "top_margin", "hide_in_fullscreen"]),
+    ("island", &["mode", "hotkey", "hide_in_fullscreen", "autohide", "top_margin"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds"]),
     ("power", &["enabled", "low_thresholds"]),
     ("timer", &["presets_minutes", "sound"]),
-    ("motion", &["reduce"]),
+    ("motion", &["reduce", "liquid"]),
     ("startup", &["launch_at_login"]),
 ];
 
@@ -310,7 +308,6 @@ fn check_unknown(root: &Table, warnings: &mut Vec<Warning>) {
     }
 }
 
-/// Mem-parse teks konfigurasi. Selalu mengembalikan konfigurasi yang valid.
 pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let d = Config::default();
     if text.len() > MAX_CONFIG_BYTES {
@@ -331,8 +328,8 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         DisplayMode::from_key(s).ok_or("harus \"always\", \"activity\", atau \"hover\"".into())
     });
     let hotkey = r.parsed("island.hotkey", d.island.hotkey, Hotkey::parse);
-    let top_margin = r.int("island.top_margin", 0, 48, d.island.top_margin as i64) as f32;
     let hide_in_fullscreen = r.bool("island.hide_in_fullscreen", d.island.hide_in_fullscreen);
+    let autohide = r.bool("island.autohide", d.island.autohide);
 
     let mascot_enabled = r.bool("mascot.enabled", d.mascot.enabled);
     let skin = r.parsed("mascot.skin", d.mascot.skin, |s| Skin::from_key(s).ok_or(format!("varian tidak dikenal: {s:?}")));
@@ -357,6 +354,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         "off" => Ok(ReduceMotion::Off),
         _ => Err("harus \"system\", \"on\", atau \"off\"".into()),
     });
+    let liquid = r.bool("motion.liquid", d.liquid);
     let launch_at_login = r.bool("startup.launch_at_login", d.launch_at_login);
 
     let mut warnings = r.warnings;
@@ -364,19 +362,18 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
 
     let config = Config {
         language,
-        island: IslandConfig { mode, hotkey, top_margin, hide_in_fullscreen },
+        island: IslandConfig { mode, hotkey, hide_in_fullscreen, autohide },
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger },
         power: PowerConfig { enabled: power_enabled, low_thresholds: thresholds.into_iter().map(|t| t as u8).collect() },
         timer: TimerConfig { presets_minutes: presets.into_iter().map(|t| t as u32).collect(), sound },
         reduce_motion,
+        liquid,
         launch_at_login,
     };
     (config, warnings)
 }
 
-/// Mengubah satu nilai di teks konfigurasi tanpa menghapus komentar.
-/// `value` adalah literal TOML, misalnya `"\"hover\""` atau `"true"`.
 pub fn set_value(text: &str, section: &str, key: &str, value: &str) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let header = format!("[{section}]");
@@ -394,7 +391,6 @@ pub fn set_value(text: &str, section: &str, key: &str, value: &str) -> String {
             match (start + 1..end).find(|&i| is_key_line(&lines[i])) {
                 Some(i) => lines[i] = new_line,
                 None => {
-                    // Sisipkan setelah baris isi terakhir bagian ini.
                     let mut at = end;
                     while at > start + 1 && lines[at - 1].trim().is_empty() {
                         at -= 1;
@@ -440,7 +436,7 @@ mod tests {
 language = "fr"
 [island]
 mode = "hover"
-top_margin = 500
+autohide = 2
 hotkey = "Shift+N"
 [mascot]
 skin = "ungu"
@@ -452,13 +448,13 @@ low_thresholds = [15, 0, "x"]
         let d = Config::default();
         assert_eq!(c.island.mode, DisplayMode::Hover, "nilai valid tetap dipakai");
         assert_eq!(c.language, d.language);
-        assert_eq!(c.island.top_margin, d.island.top_margin);
+        assert_eq!(c.island.autohide, d.island.autohide);
         assert_eq!(c.island.hotkey, d.island.hotkey);
         assert_eq!(c.mascot.skin, d.mascot.skin);
         assert_eq!(c.mascot.enabled, d.mascot.enabled);
         assert_eq!(c.power.low_thresholds, vec![15]);
         let keys: Vec<&str> = w.iter().map(|w| w.key.as_str()).collect();
-        for k in ["language", "island.top_margin", "island.hotkey", "mascot.skin", "mascot.enabled", "power.low_thresholds"] {
+        for k in ["language", "island.autohide", "island.hotkey", "mascot.skin", "mascot.enabled", "power.low_thresholds"] {
             assert!(keys.contains(&k), "peringatan untuk {k} hilang: {keys:?}");
         }
     }
@@ -508,7 +504,6 @@ low_thresholds = [15, 0, "x"]
         let (c, w) = parse(&out);
         assert!(w.is_empty());
         assert_eq!(c.island.mode, DisplayMode::Hover);
-        // Kunci yang mirip di bagian lain tidak tersentuh.
         let out = set_value(&out, "startup", "launch_at_login", "true");
         let (c, _) = parse(&out);
         assert!(c.launch_at_login);
@@ -517,11 +512,11 @@ low_thresholds = [15, 0, "x"]
 
     #[test]
     fn set_value_menambah_kunci_dan_bagian() {
-        let out = set_value("[island]\nmode = \"always\"\n\n[media]\nenabled = true\n", "island", "top_margin", "4");
+        let out = set_value("[island]\nmode = \"always\"\n\n[media]\nenabled = true\n", "island", "autohide", "false");
         let (c, w) = parse(&out);
         assert!(w.is_empty(), "{w:?}");
-        assert_eq!(c.island.top_margin, 4.0);
-        assert!(out.find("top_margin").unwrap() < out.find("[media]").unwrap());
+        assert!(!c.island.autohide);
+        assert!(out.find("autohide").unwrap() < out.find("[media]").unwrap());
         let out = set_value("", "startup", "launch_at_login", "true");
         assert!(parse(&out).0.launch_at_login);
     }

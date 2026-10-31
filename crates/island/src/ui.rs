@@ -1,10 +1,6 @@
-//! Komponen visual kecil di atas Composition: teks, bentuk, pil, maskot.
-//!
-//! Semua koordinat dalam dp; visual `stage` diskalakan ke piksel fisik.
-
 use notchi_core::color::{Color, Skin};
 use notchi_core::geom::{Point, Rect, Size};
-use notchi_core::layout::MAX_RADIUS;
+use notchi_core::layout::{FILLET, MAX_RADIUS};
 use notchi_core::mascot::{Expression, motion_for};
 use notchi_core::media::Artwork;
 use notchi_platform_win::Result;
@@ -23,7 +19,6 @@ pub enum Align {
     Right,
 }
 
-/// Konteks gambar bersama.
 #[derive(Debug)]
 pub struct Ui {
     pub c: Compositor,
@@ -50,7 +45,6 @@ impl Ui {
         Ok(v)
     }
 
-    /// Teks di dalam `rect`, rata vertikal tengah.
     pub fn text(&self, parent: &ContainerVisual, text: &str, style: TextStyle, rect: Rect, align: Align) -> Result<DynText> {
         let style = style.max_width(rect.w);
         let s = self.gfx.text(text, &style, self.scale)?;
@@ -84,7 +78,6 @@ impl Ui {
         Ok(v)
     }
 
-    /// Batang dengan lebar yang dapat diubah (progres, level volume).
     pub fn bar(&self, parent: &ContainerVisual, rect: Rect, fill: Color) -> Result<SpriteVisual> {
         let v = self.c.CreateSpriteVisual()?;
         v.SetBrush(&self.c.CreateColorBrushWithColor(color(fill))?)?;
@@ -94,7 +87,6 @@ impl Ui {
         Ok(v)
     }
 
-    /// Tombol bulat dengan glyph atau label di tengah.
     pub fn button(&self, parent: &ContainerVisual, rect: Rect, label: &str, icon: bool, bg: Color, fg: Color) -> Result<ContainerVisual> {
         let host = self.container(parent)?;
         host.SetOffset(v3(rect.x, rect.y, 0.0))?;
@@ -111,7 +103,6 @@ impl Ui {
     }
 }
 
-/// Posisi kiri atas untuk isi berukuran `size` di dalam `rect`.
 pub fn place(rect: Rect, size: Size, align: Align) -> Point {
     let x = match align {
         Align::Left => rect.x,
@@ -121,7 +112,6 @@ pub fn place(rect: Rect, size: Size, align: Align) -> Point {
     Point::new(x.round(), (rect.y + (rect.h - size.h) / 2.0).round())
 }
 
-/// Teks yang isinya diperbarui (hitung mundur, jam, progres).
 #[derive(Debug)]
 pub struct DynText {
     pub visual: SpriteVisual,
@@ -148,42 +138,78 @@ impl DynText {
     }
 }
 
-/// Pil hitam yang ukurannya dianimasikan pegas; isi dipotong mengikuti
-/// bentuknya, dan radius mengikuti busur lingkaran (tinggi / 2).
 #[derive(Debug)]
 pub struct Pill {
     pub visual: ShapeVisual,
     pub content: ContainerVisual,
+    flares: [SpriteVisual; 2],
+    fill: Color,
 }
+
+const OVERLAP: f32 = 1.0;
 
 impl Pill {
     pub fn new(ui: &Ui, parent: &ContainerVisual, fill: Color) -> Result<Pill> {
+        let flares = [ui.c.CreateSpriteVisual()?, ui.c.CreateSpriteVisual()?];
+        for f in &flares {
+            parent.Children()?.InsertAtTop(f)?;
+        }
         let visual = ui.c.CreateShapeVisual()?;
         visual.SetAnchorPoint(v2(0.5, 0.0))?;
         let host: CompositionObject = visual.cast()?;
-        let size_expr = "host.Size";
-        let radius_expr = format!("Vector2(Min(host.Size.Y / 2, {MAX_RADIUS}), Min(host.Size.Y / 2, {MAX_RADIUS}))");
+        let refs = [("host", &host)];
+        ui.anim.bind(&visual, "CenterPoint", "Vector3(host.Size.X / 2, 0, 0)", &refs)?;
 
-        let geom = ui.c.CreateRoundedRectangleGeometry()?;
-        ui.anim.bind(&geom, "Size", size_expr, &[("host", &host)])?;
-        ui.anim.bind(&geom, "CornerRadius", &radius_expr, &[("host", &host)])?;
-        let shape = ui.c.CreateSpriteShapeWithGeometry(&geom)?;
+        let r = format!("Min(Min(host.Size.Y / 2, host.Size.X / 2), {MAX_RADIUS})");
+        let offset = format!("Vector2(0, -{r})");
+        let size = format!("Vector2(host.Size.X, host.Size.Y + {r})");
+        let radius = format!("Vector2({r}, {r})");
+        let attached = |ui: &Ui| -> Result<_> {
+            let g = ui.c.CreateRoundedRectangleGeometry()?;
+            ui.anim.bind(&g, "Offset", &offset, &refs)?;
+            ui.anim.bind(&g, "Size", &size, &refs)?;
+            ui.anim.bind(&g, "CornerRadius", &radius, &refs)?;
+            Ok(g)
+        };
+
+        let shape = ui.c.CreateSpriteShapeWithGeometry(&attached(ui)?)?;
         shape.SetFillBrush(&ui.c.CreateColorBrushWithColor(color(fill))?)?;
         visual.Shapes()?.Append(&shape)?;
 
         let content = ui.c.CreateContainerVisual()?;
         content.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
-        let clip_geom = ui.c.CreateRoundedRectangleGeometry()?;
-        ui.anim.bind(&clip_geom, "Size", size_expr, &[("host", &host)])?;
-        ui.anim.bind(&clip_geom, "CornerRadius", &radius_expr, &[("host", &host)])?;
-        content.SetClip(&ui.c.CreateGeometricClipWithGeometry(&clip_geom)?)?;
+        content.SetClip(&ui.c.CreateGeometricClipWithGeometry(&attached(ui)?)?)?;
         visual.Children()?.InsertAtTop(&content)?;
         parent.Children()?.InsertAtTop(&visual)?;
-        Ok(Pill { visual, content })
+
+        let f = FILLET;
+        let grow = format!("Clamp(host.Size.Y / {}, 0, 1)", 2.0 * f);
+        let edge = "host.Size.X * host.Scale.X / 2";
+        let sides = [(format!("host.Offset.X - {edge} - {f}"), f), (format!("host.Offset.X + {edge} - {OVERLAP}"), OVERLAP)];
+        for (flare, (x, pivot)) in flares.iter().zip(sides) {
+            flare.SetSize(v2(f + OVERLAP, f))?;
+            flare.SetCenterPoint(v3(pivot, 0.0, 0.0))?;
+            ui.anim.bind(flare, "Offset", &format!("Vector3({x}, host.Offset.Y, 0)"), &refs)?;
+            ui.anim.bind(flare, "Scale", &format!("Vector3({grow}, {grow}, 1)"), &refs)?;
+            ui.anim.bind(flare, "Opacity", "host.Opacity", &refs)?;
+        }
+        Ok(Pill { visual, content, flares, fill })
+    }
+
+    pub fn set_liquid(&self, ui: &Ui, on: bool) -> Result<()> {
+        for (i, flare) in self.flares.iter().enumerate() {
+            flare.SetIsVisible(on)?;
+            if on {
+                let s = ui.gfx.fillet(FILLET, OVERLAP, self.fill, ui.scale, i == 1)?;
+                let brush = ui.c.CreateSurfaceBrushWithSurface(&s.surface)?;
+                brush.SetStretch(CompositionStretch::Fill)?;
+                flare.SetBrush(&brush)?;
+            }
+        }
+        Ok(())
     }
 }
 
-/// Membangun maskot Notchi di `rect` dengan ekspresi dan geraknya.
 pub fn mascot(ui: &Ui, parent: &ContainerVisual, rect: Rect, skin: Skin, expr: Expression) -> Result<ContainerVisual> {
     let s = rect.w.min(rect.h);
     let m = motion_for(expr, ui.anim.reduce_motion);
@@ -192,7 +218,6 @@ pub fn mascot(ui: &Ui, parent: &ContainerVisual, rect: Rect, skin: Skin, expr: E
     host.SetSize(v2(s, s))?;
     host.SetCenterPoint(v3(s / 2.0, s * 0.95, 0.0))?;
 
-    // Tubuh: persegi sangat bulat agar terasa lunak, bukan lingkaran sempurna.
     let body = ui.c.CreateShapeVisual()?;
     body.SetSize(v2(s, s))?;
     let geom = ui.c.CreateRoundedRectangleGeometry()?;
@@ -243,7 +268,7 @@ pub fn mascot(ui: &Ui, parent: &ContainerVisual, rect: Rect, skin: Skin, expr: E
         ui.anim.repeat(&host, "Scale.Y", &frames, period as f32, 0.0)?;
     }
     if let Some((deg, period)) = m.sway {
-        ui.anim.repeat(&host, "RotationAngleInDegrees", &[(0.0, -deg), (0.5, deg), (1.0, -deg)], period as f32, 0.0)?;
+        ui.anim.repeat(&host, "RotationAngleInDegrees", &[(0.0, 0.0), (0.25, deg), (0.75, -deg), (1.0, 0.0)], period as f32, 0.0)?;
     }
     if m.hop {
         let y = rect.y;
@@ -253,7 +278,6 @@ pub fn mascot(ui: &Ui, parent: &ContainerVisual, rect: Rect, skin: Skin, expr: E
     Ok(host)
 }
 
-/// Gelombang suara tetap (bukan analisis audio, agar hemat CPU; PRD §2.6).
 pub fn waveform(ui: &Ui, parent: &ContainerVisual, rect: Rect, fill: Color, playing: bool) -> Result<()> {
     let bars = 4;
     let bw = 3.0;

@@ -1,11 +1,3 @@
-//! Windows.UI.Composition: visual tree di GPU dan animasi pegas di thread
-//! compositor (PRD §6.1).
-//!
-//! Tipe Composition diekspor ulang dari sini agar crate fitur tidak
-//! bergantung langsung pada `windows`. Pegas memakai
-//! `SpringScalarNaturalMotionAnimation` per sub-kanal (misalnya `Size.X`)
-//! dengan pemetaan `DampingRatio = 1 − bounce`, `Period = duration`.
-
 pub use windows::Foundation::TimeSpan;
 pub use windows::UI::Color;
 pub use windows::UI::Composition::*;
@@ -25,12 +17,10 @@ use windows_core::{HSTRING, Result};
 
 use crate::window::{Event, UiProxy, Window};
 
-/// Compositor dan target untuk satu jendela.
 pub struct CompositionHost {
     _controller: Option<DispatcherQueueController>,
     pub compositor: Compositor,
     _target: DesktopWindowTarget,
-    /// Visual akar seukuran area klien jendela (piksel fisik).
     pub root: ContainerVisual,
 }
 
@@ -50,13 +40,10 @@ impl CompositionHost {
                 threadType: DQTYPE_THREAD_CURRENT,
                 apartmentType: DQTAT_COM_NONE,
             };
-            // SAFETY: opsi valid; thread ini sudah diinisialisasi sebagai STA.
             Some(unsafe { CreateDispatcherQueueController(options)? })
         };
         let compositor = Compositor::new()?;
         let interop: ICompositorDesktopInterop = compositor.cast()?;
-        // SAFETY: hwnd milik thread ini dan hidup lebih lama dari target
-        // (keduanya dimiliki struktur fitur yang sama dan di-drop bersama).
         let target = unsafe { interop.CreateDesktopWindowTarget(HWND(window.raw_hwnd() as *mut _), true)? };
         let root = compositor.CreateContainerVisual()?;
         root.SetRelativeSizeAdjustment(Vector2::new(1.0, 1.0))?;
@@ -85,8 +72,6 @@ fn boxed_f32(v: f32) -> Result<IReference<f32>> {
     PropertyValue::CreateSingle(v)?.cast()
 }
 
-/// Pembuat animasi dengan dukungan Reduce Motion (PRD §2.3): bila aktif,
-/// semua pegas diganti transisi linear 120 ms.
 #[derive(Clone)]
 pub struct Animator {
     pub compositor: Compositor,
@@ -100,14 +85,13 @@ impl std::fmt::Debug for Animator {
 }
 
 pub const REDUCED_MS: f32 = 120.0;
+pub const LOOP_BUDGET_MS: f32 = 12_000.0;
 
 impl Animator {
     pub fn new(compositor: &Compositor) -> Self {
         Self { compositor: compositor.clone(), reduce_motion: false }
     }
 
-    /// Menganimasikan properti skalar (misalnya `"Offset.Y"`) ke `value`
-    /// dengan pegas. Kecepatan saat ini dipertahankan oleh compositor.
     pub fn spring(&self, target: &impl Interface, prop: &str, value: f32, preset: SpringPreset) -> Result<()> {
         let obj: CompositionObject = target.cast()?;
         if self.reduce_motion {
@@ -115,21 +99,17 @@ impl Animator {
         }
         let anim = self.compositor.CreateSpringScalarAnimation()?;
         anim.SetDampingRatio((1.0 - preset.bounce).clamp(0.05, 1.0))?;
-        // Period = 2π/ω dengan ω = 2π/duration (PRD §2.3), jadi Period = duration.
-        anim.SetPeriod(ts_ms(preset.duration * 1000.0))?;
+        anim.SetPeriod(ts_ms(preset.duration * 1000.0 / core::f32::consts::TAU))?;
         anim.SetFinalValue(&boxed_f32(value)?)?;
         obj.StartAnimation(&HSTRING::from(prop), &anim)
     }
 
-    /// Transisi linear (fade) ke `value` dalam `ms`, setelah `delay_ms`.
     pub fn linear(&self, target: &impl Interface, prop: &str, value: f32, ms: f32, delay_ms: f32) -> Result<()> {
         let obj: CompositionObject = target.cast()?;
         let ms = if self.reduce_motion { ms.min(REDUCED_MS) } else { ms };
         self.linear_on(&obj, prop, value, ms, delay_ms)
     }
 
-    /// Seperti [`Animator::linear`] tetapi tidak dipersingkat oleh Reduce
-    /// Motion; untuk batang progres yang mencerminkan waktu nyata.
     pub fn linear_always(&self, target: &impl Interface, prop: &str, value: f32, ms: f32) -> Result<()> {
         let obj: CompositionObject = target.cast()?;
         self.linear_on(&obj, prop, value, ms, 0.0)
@@ -148,22 +128,20 @@ impl Animator {
         obj.StartAnimation(&HSTRING::from(prop), &anim)
     }
 
-    /// Animasi berulang selamanya dari key frame `(progres 0–1, nilai)`.
-    /// Diabaikan saat Reduce Motion aktif.
     pub fn repeat(&self, target: &impl Interface, prop: &str, frames: &[(f32, f32)], period_ms: f32, delay_ms: f32) -> Result<()> {
         if self.reduce_motion {
             return Ok(());
         }
         let obj: CompositionObject = target.cast()?;
         let anim = self.keyframes(frames, period_ms)?;
-        anim.SetIterationBehavior(AnimationIterationBehavior::Forever)?;
+        anim.SetIterationBehavior(AnimationIterationBehavior::Count)?;
+        anim.SetIterationCount((LOOP_BUDGET_MS / period_ms.max(1.0)).ceil().max(1.0) as i32)?;
         if delay_ms > 0.0 {
             anim.SetDelayTime(ts_ms(delay_ms))?;
         }
         obj.StartAnimation(&HSTRING::from(prop), &anim)
     }
 
-    /// Animasi key frame satu kali. Diabaikan saat Reduce Motion aktif.
     pub fn once(&self, target: &impl Interface, prop: &str, frames: &[(f32, f32)], ms: f32, delay_ms: f32) -> Result<()> {
         if self.reduce_motion {
             return Ok(());
@@ -186,7 +164,6 @@ impl Animator {
         Ok(anim)
     }
 
-    /// Mengikat properti ke ekspresi yang dievaluasi compositor setiap frame.
     pub fn bind(&self, target: &impl Interface, prop: &str, expression: &str, refs: &[(&str, &CompositionObject)]) -> Result<()> {
         let obj: CompositionObject = target.cast()?;
         let anim = self.compositor.CreateExpressionAnimationWithExpression(&HSTRING::from(expression))?;
@@ -201,8 +178,6 @@ impl Animator {
         obj.StopAnimation(&HSTRING::from(prop))
     }
 
-    /// Memulai batch; event `Event::User(tag)` dikirim lewat `proxy` setelah
-    /// semua animasi yang dimulai sebelum [`Batch::end`] selesai.
     pub fn batch(&self) -> Result<Batch> {
         Ok(Batch(self.compositor.CreateScopedBatch(CompositionBatchTypes::Animation)?))
     }

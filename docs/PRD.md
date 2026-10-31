@@ -102,9 +102,11 @@ k = \left(\frac{2\pi}{d}\right)^2 \qquad c = \frac{4\pi\,(1-b)}{d}
 
 | Preset | duration | bounce | Dipakai untuk |
 | --- | --- | --- | --- |
-| smooth | 0,50 s | 0,00 | Pindah konten dalam kartu, fade |
-| snappy | 0,40 s | 0,15 | Magnifikasi Dock, hover |
-| bouncy | 0,50 s | 0,30 | Island mengembang/mengecil, bounce ikon |
+| smooth | 0,32 s | 0,00 | Pindah konten dalam kartu, fade |
+| snappy | 0,26 s | 0,12 | Magnifikasi Dock, hover |
+| bouncy | 0,38 s | 0,25 | Island mengembang/mengecil, pil turun dari tepi atas, bounce ikon |
+
+Nilai awal (0,50/0,40/0,50 s) terasa lambat saat diuji, sehingga dipercepat; semua preset kini settle dalam 400 ms.
 
 Animasi berjalan di thread compositor GPU (lihat bagian 6) agar tetap mulus saat thread UI sibuk. Bila Windows "Animation effects" dimatikan (`SPI_GETCLIENTAREAANIMATION`), semua animasi diganti crossfade 120 ms.
 
@@ -160,7 +162,9 @@ Nilai warna adalah usulan awal yang harus lulus kontras WCAG AA (4,5:1) di atas 
 
 ## 3. Fitur Island (pil interaktif di tengah atas layar)
 
-Island adalah jendela kecil berbentuk pil, selalu di atas, yang berubah ukuran mengikuti aktivitas live yang sedang berjalan. Di iPhone fitur ini bernama Dynamic Island; di Mac, Tahoe menampilkan Live Activities dari iPhone di menu bar ([MacStories](https://www.macstories.net/news/macos-tahoe-the-macstories-overview/)), sehingga Island di sini adalah gabungan keduanya untuk Windows. Karena PC tidak punya notch, ada tiga mode tampil: **Selalu tampil**, **Hanya saat ada aktivitas** (default), dan **Muncul saat hover**. Pada Fase 1 Island berjalan sebagai overlay tanpa menu bar; mode default menghindari tumpang tindih permanen dengan bilah judul aplikasi.
+Island adalah jendela kecil berbentuk pil, selalu di atas, yang berubah ukuran mengikuti aktivitas live yang sedang berjalan. Di iPhone fitur ini bernama Dynamic Island; di Mac, Tahoe menampilkan Live Activities dari iPhone di menu bar ([MacStories](https://www.macstories.net/news/macos-tahoe-the-macstories-overview/)), sehingga Island di sini adalah gabungan keduanya untuk Windows. Karena PC tidak punya notch, ada tiga mode tampil: **Selalu tampil** (default), **Hanya saat ada aktivitas**, dan **Muncul saat hover**. Pada Fase 1 Island berjalan sebagai overlay tanpa menu bar.
+
+Island **menempel di tepi atas layar** seperti notch: sisi atasnya rata dengan tepi layar, sudut bawahnya membulat, dan di pertemuan dengan tepi ada lengkung cekung kecil (10 dp) sehingga pil tampak seperti cairan yang menetes dari tepi. Dengan **sembunyi otomatis** (`island.autohide`, default aktif), Island masuk ke tepi atas dan hanya menyisakan bibir 4 dp; ia turun saat kursor masuk ke zona tipis (10 dp) di sekitar notch dan naik lagi 300 ms setelah kursor pergi. Alert, kartu yang terbuka, dan aktivitas baru (menyembul 2,5 detik) selalu tampil penuh. Saat tersembunyi, isi pil dilepas sehingga tidak ada animasi maupun timer yang berjalan.
 
 ### 3.1 State dan ukuran
 
@@ -383,7 +387,7 @@ Aplikasi dibangun sebagai satu proses Rust native yang memakai API komposisi GPU
 | Toolchain | Rust stable, target `x86_64-pc-windows-msvc`, CRT statis (`+crt-static`); `aarch64` setelah 1.0 | GNU toolchain | Satu `.exe` tanpa instal VC++ Redistributable; debugging dan tanda tangan lebih mulus dengan MSVC |
 | Binding OS | Crate resmi `windows` (Microsoft, rilis 0.62.x di dokumentasinya) dengan fitur dipilih satu per satu | `winapi` (tidak dipelihara), binding tulis tangan | Mencakup Win32, WinRT, Composition, Direct2D, DirectWrite; dihasilkan dari metadata resmi ([Microsoft Learn](https://learn.microsoft.com/en-us/windows/dev-environment/rust/rust-for-windows)) |
 | Render dan animasi | **Windows.UI.Composition** (visual tree di GPU, animasi pegas di thread compositor) + **Direct2D/DirectWrite** untuk merasterisasi teks dan ikon ke permukaan yang di-cache | `wgpu` + UI kustom; Skia; Electron/Tauri/WebView2; egui/iced/Slint | Paling hemat RAM dan CPU, teks native yang tajam, tanpa runtime tambahan. `wgpu` disimpan untuk efek opsional "Glass Pro" di versi berikutnya |
-| Animasi pegas | `SpringScalarNaturalMotionAnimation` dan `SpringVector3NaturalMotionAnimation` ([Microsoft Learn](https://learn.microsoft.com/en-us/uwp/api/windows.ui.composition.springscalarnaturalmotionanimation?view=winrt-19041)) | Integrator pegas di CPU per frame | Berjalan tanpa membangunkan thread UI. Pemetaan dari bagian 2.3: `DampingRatio = 1 − bounce`, `Period = duration` |
+| Animasi pegas | `SpringScalarNaturalMotionAnimation` dan `SpringVector3NaturalMotionAnimation` ([Microsoft Learn](https://learn.microsoft.com/en-us/uwp/api/windows.ui.composition.springscalarnaturalmotionanimation?view=winrt-19041)) | Integrator pegas di CPU per frame | Berjalan tanpa membangunkan thread UI. Pemetaan dari bagian 2.3: `DampingRatio = 1 − bounce`, `Period = duration / 2π` (compositor memakai ω = 1/Period; terukur di layar) |
 | Material kaca | `DWMWA_USE_HOSTBACKDROPBRUSH` lalu `Compositor.CreateHostBackdropBrush` dengan efek blur, tint, dan noise ([Microsoft Learn](https://learn.microsoft.com/de-de/windows/windows-app-sdk/api/winrt/microsoft.ui.composition.systembackdrops.isystembackdropcontroller.settarget)). Cadangan: `DWMWA_SYSTEMBACKDROP_TYPE` (Acrylic/Mica, build 22621+) ([Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type)), lalu warna solid | Menangkap layar lalu blur sendiri (`Windows.Graphics.Capture`) | Menangkap layar memunculkan masalah privasi, biaya GPU tetap, dan loop umpan balik. Hanya dipertimbangkan sebagai fitur opsional |
 | Toolkit UI | Tidak memakai toolkit umum; *scene graph* kecil buatan sendiri dengan sekitar 10 komponen (Pill, Icon, Label, Slider, Card, Popover, List, Toggle, Tooltip, Tile) | WinUI 3 / XAML | XAML menambah puluhan MB RAM dan ketergantungan runtime |
 | Konkurensi | Thread utama (STA + `DispatcherQueue`) untuk UI; thread pekerja dengan *channel* standar; **tanpa runtime async** (tanpa tokio) | tokio | Lebih kecil dan lebih sederhana; operasi WinRT async dibungkus callback ke channel |
@@ -396,7 +400,7 @@ Aplikasi dibangun sebagai satu proses Rust native yang memakai API komposisi GPU
 | Crate | Isi | Aturan |
 | --- | --- | --- |
 | `core` | Mesin pegas, state machine Island/Dock, model data, aturan prioritas | Rust murni, `#![forbid(unsafe_code)]`, dapat diuji di Linux CI |
-| `platform-win` | Pembungkus aman untuk Win32/WinRT/Composition/D2D | **Satu-satunya tempat `unsafe`**; setiap blok `unsafe` diberi komentar `SAFETY:` |
+| `platform-win` | Pembungkus aman untuk Win32/WinRT/Composition/D2D | **Satu-satunya tempat `unsafe`** |
 | `ui` | Scene graph dan komponen | `forbid(unsafe_code)` |
 | `island`, `dock`, `menubar`, `launcher`, `controlcenter` | Fitur per modul sesuai bagian 3–5 | `forbid(unsafe_code)` |
 | `ipc` | Named pipe lokal, skema pesan, validasi | Dilindungi fuzzing |
@@ -485,7 +489,7 @@ Keamanan dirancang dari prinsip "hak sekecil mungkin, data tetap lokal, semua ya
 - **Pemuatan DLL:** `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` untuk mencegah *DLL hijacking*.
 - **Kebijakan mitigasi saat runtime** lewat `SetProcessMitigationPolicy`: larang gambar dari jaringan dan label integritas rendah, nonaktifkan *extension point* lama (AppInit dll), pemeriksaan handle ketat. Kebijakan "hanya DLL bertanda tangan Microsoft" dan larangan kode dinamis sengaja **tidak** dipakai karena shell extension dan driver GPU dimuat ke proses ini.
 - **Peringatan UIPI:** Dock tidak bisa menggerakkan jendela aplikasi yang berjalan sebagai administrator; ini disengaja dan didokumentasikan.
-- **Aturan kode:** `clippy::undocumented_unsafe_blocks` sebagai error, `cargo geiger` di CI untuk memantau `unsafe` pada dependensi, Miri untuk crate `core`.
+- **Aturan kode:** `unsafe` hanya di `platform-win`, kode tanpa komentar, `cargo geiger` di CI untuk memantau `unsafe` pada dependensi, Miri untuk crate `core`.
 
 ### 7.3 Pembaruan dan distribusi aman
 
@@ -544,6 +548,8 @@ Target performanya adalah 60 MB RAM dan 0,3% CPU saat idle, dan angka itu dijaga
 | Kejadian mouse Dock | Digabung per refresh layar; ≤ 1 ms per pemrosesan |
 | GPU idle | 0 draw call; < 2% GPU terintegrasi saat animasi sesekali |
 | Wilayah blur | Hanya area jendela (menu bar ≈ 24–37 dp tinggi, Dock ≈ 90 dp, Island ≤ 371×200 dp); radius maks. 32 dp |
+
+Hasil ukur Fase 1 (Island saja, build rilis, Windows 11, layar 1920×1080 skala 125%, sesi media aktif): CPU 0 ms per 60 detik saat pil tersembunyi, private working set 1–3 MB, commit ±12 MB. Caranya: Direct2D memakai WARP sehingga driver GPU tidak dimuat (animasi tetap di compositor GPU); animasi berulang dibatasi 12 detik; hook WinEvent hanya terpasang saat kartu terbuka; laporan posisi media yang tidak mengubah tampilan dibuang di thread media; jendela berukuran tetap dan hanya region kliknya yang berubah; cache grafis dan working set dipangkas 4 detik setelah Island diam.
 | Baterai | Tidak memanggil `timeBeginPeriod`; timer jam diselaraskan ke menit |
 | Mode Efisiensi | Otomatis saat Battery Saver, sesi Remote Desktop, atau GPU perangkat lunak: tanpa blur, 60 fps maksimum, warna solid |
 

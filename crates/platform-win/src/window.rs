@@ -1,14 +1,3 @@
-//! Jendela overlay Island, message loop, dan event (PRD §3.3, §6.3).
-//!
-//! Jendela memakai `WS_EX_NOACTIVATE` sehingga mengklik Island tidak pernah
-//! mencuri fokus dari aplikasi lain, dan `WS_EX_NOREDIRECTIONBITMAP` karena
-//! seluruh isinya digambar oleh Windows.UI.Composition.
-//!
-//! Event diteruskan ke satu handler. Bila handler sedang berjalan (misalnya
-//! saat menu popup membuka loop modal), event baru diantrekan lalu diproses
-//! setelah handler selesai, sehingga handler tidak pernah dipanggil ulang
-//! secara bersarang.
-
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::c_void;
@@ -23,7 +12,7 @@ use windows::Win32::Graphics::Dwm::{
     DWMWCP_DONOTROUND, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS, DeleteObject,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, CreateRectRgn, SetWindowRgn, DIB_RGB_COLORS, DeleteObject,
     GetMonitorInfoW, HGDIOBJ, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -56,10 +45,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, PCWSTR, w};
 use windows_core::{HSTRING, Result};
 
-/// Nama kelas jendela, juga dipakai instans kedua untuk menemukan instans pertama.
 pub const CLASS_NAME: &str = "Notchi.Island";
 
-/// `WM_MOUSELEAVE` (winuser.h), didefinisikan di sini agar tidak perlu fitur `Win32_UI_Controls`.
 const WM_MOUSELEAVE: u32 = 0x02A3;
 const WM_APP_WAKE: u32 = WM_APP + 1;
 const WM_APP_TRAY: u32 = WM_APP + 2;
@@ -81,14 +68,12 @@ pub enum TrayEvent {
     Menu,
 }
 
-/// Semua masukan untuk fitur. Koordinat mouse dalam dp relatif jendela.
 #[derive(Debug, Clone)]
 pub enum Event {
     MouseMove(Point),
     MouseLeave,
     MouseDown(Point, MouseButton),
     MouseUp(Point, MouseButton),
-    /// Kelipatan 120 per takik roda; positif = menjauh dari pengguna.
     Wheel(i32),
     Timer(usize),
     Hotkey(i32),
@@ -96,20 +81,15 @@ pub enum Event {
     DisplayChanged,
     SettingsChanged,
     PowerChanged,
-    /// Petunjuk dari shell bahwa aplikasi layar penuh mulai/berhenti.
     FullscreenHint(bool),
     ForegroundChanged,
-    /// Tombol mouse ditekan di jendela proses lain ("klik di luar").
     ForeignMouseDown,
     Tray(TrayEvent),
-    /// `explorer.exe` dimulai ulang; ikon tray dan appbar perlu didaftarkan lagi.
     TaskbarCreated,
-    /// Notchi dijalankan lagi saat sudah berjalan.
     SecondInstance,
     Media(Option<MediaSnapshot>),
     MediaArt { track_id: u64, art: Option<Artwork> },
     FileChanged,
-    /// Event bebas dari fitur, misalnya selesainya batch animasi.
     User(u64),
 }
 
@@ -141,18 +121,15 @@ impl WindowState {
     }
 }
 
-/// Handle ringan ke jendela; dapat disalin bebas di thread UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     hwnd: HWND,
 }
 
-/// Pemilik jendela; menghancurkan jendela saat di-drop.
 pub struct OwnedWindow {
     window: Window,
     state: *const WindowState,
     power: Vec<HPOWERNOTIFY>,
-    hooks: Vec<HWINEVENTHOOK>,
     appbar: bool,
 }
 
@@ -162,7 +139,6 @@ impl std::fmt::Debug for OwnedWindow {
     }
 }
 
-/// Pengirim event dari thread lain ke thread UI.
 #[derive(Clone)]
 pub struct UiProxy {
     hwnd: isize,
@@ -178,14 +154,11 @@ impl std::fmt::Debug for UiProxy {
 impl UiProxy {
     pub fn post(&self, ev: Event) {
         if let Ok(mut q) = self.remote.lock() {
-            // Batasi antrean agar thread lain tidak dapat membanjiri UI.
             if q.len() >= 256 {
                 q.pop_front();
             }
             q.push_back(ev);
         }
-        // SAFETY: PostMessageW aman dipanggil dari thread mana pun; bila
-        // jendela sudah hancur, pemanggilan gagal tanpa efek samping.
         unsafe {
             let _ = PostMessageW(Some(HWND(self.hwnd as *mut c_void)), WM_APP_WAKE, WPARAM(0), LPARAM(0));
         }
@@ -199,21 +172,15 @@ fn wide(s: &str) -> Vec<u16> {
 fn mouse_point(hwnd: HWND, lparam: LPARAM) -> Point {
     let x = (lparam.0 & 0xFFFF) as u16 as i16 as f32;
     let y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as f32;
-    // SAFETY: hwnd valid selama pesan diproses.
     let scale = scale_for_dpi(unsafe { GetDpiForWindow(hwnd) });
     Point::new(x / scale, y / scale)
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    // SAFETY: GWLP_USERDATA berisi pointer `WindowState` yang dipasang
-    // `create_overlay` dan tetap hidup sampai `OwnedWindow` di-drop (yang
-    // menghancurkan jendela lebih dulu, lalu mengosongkan pointer).
     let state = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const WindowState;
     if state.is_null() {
-        // SAFETY: meneruskan pesan apa adanya ke prosedur default.
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
-    // SAFETY: lihat di atas; hanya diakses dari thread pemilik jendela.
     let state = unsafe { &*state };
     let window = Window { hwnd };
     let send = |ev: Event| state.dispatch(&window, ev);
@@ -227,7 +194,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                     hwndTrack: hwnd,
                     dwHoverTime: 0,
                 };
-                // SAFETY: struktur valid dan hwnd milik thread ini.
                 unsafe {
                     let _ = TrackMouseEvent(&mut tme);
                 }
@@ -239,14 +205,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             send(Event::MouseLeave);
         }
         WM_LBUTTONDOWN => {
-            // SAFETY: hwnd milik thread ini.
             unsafe {
                 SetCapture(hwnd);
             }
             send(Event::MouseDown(mouse_point(hwnd, lparam), MouseButton::Left));
         }
         WM_LBUTTONUP => {
-            // SAFETY: melepas capture milik thread ini.
             unsafe {
                 let _ = ReleaseCapture();
             }
@@ -296,17 +260,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         m if m == state.taskbar_created && m != 0 => send(Event::TaskbarCreated),
         _ => {}
     }
-    // SAFETY: meneruskan pesan apa adanya ke prosedur default.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-/// Membuat jendela overlay tersembunyi. Pasang handler dengan
-/// [`OwnedWindow::set_handler`] lalu tampilkan dengan [`Window::set_bounds`].
 pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
     let class = wide(CLASS_NAME);
     let title = wide(title);
-    // SAFETY: semua pointer menunjuk buffer yang hidup selama pemanggilan;
-    // pointer state dipasang sebelum pesan pertama yang memerlukannya.
     unsafe {
         let instance: HINSTANCE = GetModuleHandleW(None)?.into();
         let wc = WNDCLASSEXW {
@@ -317,7 +276,6 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
             lpszClassName: PCWSTR(class.as_ptr()),
             ..Default::default()
         };
-        // Gagal bila kelas sudah terdaftar; itu tidak masalah.
         RegisterClassExW(&wc);
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
@@ -334,10 +292,9 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
             None,
         )?;
 
-        // Tanpa sudut bulat, garis tepi, atau animasi transisi bawaan DWM.
         let corner = DWMWCP_DONOTROUND;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const _ as *const c_void, 4);
-        let no_border: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
+        let no_border: u32 = 0xFFFF_FFFE;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &no_border as *const _ as *const c_void, 4);
         let yes = BOOL(1);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &yes as *const _ as *const c_void, 4);
@@ -353,12 +310,13 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
         });
         let state = Box::into_raw(state);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
-        Ok(OwnedWindow { window: Window { hwnd }, state, power: Vec::new(), hooks: Vec::new(), appbar: false })
+        Ok(OwnedWindow { window: Window { hwnd }, state, power: Vec::new(), appbar: false })
     }
 }
 
 thread_local! {
     static HOOK_TARGETS: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) };
+    static OUTSIDE_HOOKS: RefCell<Vec<HWINEVENTHOOK>> = const { RefCell::new(Vec::new()) };
 }
 
 extern "system" fn win_event_proc(
@@ -373,7 +331,6 @@ extern "system" fn win_event_proc(
     let msg = if event == EVENT_SYSTEM_FOREGROUND { WM_APP_FOREGROUND } else { WM_APP_CAPTURE };
     HOOK_TARGETS.with(|t| {
         for &h in t.borrow().iter() {
-            // SAFETY: hanya mengirim pesan ke jendela milik thread ini.
             unsafe {
                 let _ = PostMessageW(Some(HWND(h as *mut c_void)), msg, WPARAM(0), LPARAM(0));
             }
@@ -387,7 +344,6 @@ impl OwnedWindow {
     }
 
     fn state(&self) -> &WindowState {
-        // SAFETY: `state` hidup selama `OwnedWindow` hidup.
         unsafe { &*self.state }
     }
 
@@ -399,10 +355,8 @@ impl OwnedWindow {
         UiProxy { hwnd: self.window.hwnd.0 as isize, remote: self.state().remote.clone() }
     }
 
-    /// Notifikasi perubahan sumber daya dan persentase baterai.
     pub fn register_power_notifications(&mut self) {
         for guid in [GUID_ACDC_POWER_SOURCE, GUID_BATTERY_PERCENTAGE_REMAINING] {
-            // SAFETY: hwnd valid; registrasi dilepas di Drop.
             if let Ok(h) = unsafe {
                 RegisterPowerSettingNotification(HANDLE(self.window.hwnd.0), &guid, windows::Win32::UI::WindowsAndMessaging::DEVICE_NOTIFY_WINDOW_HANDLE)
             } {
@@ -411,14 +365,11 @@ impl OwnedWindow {
         }
     }
 
-    /// Mendaftar sebagai appbar tanpa memesan ruang, hanya untuk menerima
-    /// `ABN_FULLSCREENAPP` dari shell.
     pub fn register_fullscreen_notifications(&mut self) {
         if self.appbar {
             self.unregister_appbar();
         }
         let mut abd = self.appbar_data();
-        // SAFETY: struktur valid selama pemanggilan.
         self.appbar = unsafe { SHAppBarMessage(ABM_NEW, &mut abd) } != 0;
     }
 
@@ -433,37 +384,18 @@ impl OwnedWindow {
 
     fn unregister_appbar(&mut self) {
         let mut abd = self.appbar_data();
-        // SAFETY: struktur valid selama pemanggilan.
         unsafe {
             SHAppBarMessage(ABM_REMOVE, &mut abd);
         }
         self.appbar = false;
     }
 
-    /// Memantau perpindahan jendela aktif dan klik di proses lain lewat
-    /// WinEvent di luar proses (tanpa injeksi DLL, tanpa hook papan ketik).
-    pub fn watch_foreground(&mut self) {
-        HOOK_TARGETS.with(|t| t.borrow_mut().push(self.window.hwnd.0 as isize));
-        for event in [EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_CAPTURESTART] {
-            // SAFETY: callback adalah fungsi `extern "system"` statis.
-            let hook = unsafe {
-                SetWinEventHook(event, event, None, Some(win_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)
-            };
-            if !hook.is_invalid() {
-                self.hooks.push(hook);
-            }
-        }
-    }
 }
 
 impl Drop for OwnedWindow {
     fn drop(&mut self) {
-        // SAFETY: semua handle dimiliki struct ini; jendela dihancurkan
-        // sebelum state dibebaskan sehingga wndproc tidak lagi melihatnya.
+        self.window.watch_outside(false);
         unsafe {
-            for h in self.hooks.drain(..) {
-                let _ = UnhookWinEvent(h);
-            }
             for p in self.power.drain(..) {
                 let _ = UnregisterPowerSettingNotification(p);
             }
@@ -474,11 +406,9 @@ impl Drop for OwnedWindow {
             let _ = DestroyWindow(self.window.hwnd);
             drop(Box::from_raw(self.state as *mut WindowState));
         }
-        HOOK_TARGETS.with(|t| t.borrow_mut().retain(|&h| h != self.window.hwnd.0 as isize));
     }
 }
 
-/// Item menu konteks.
 #[derive(Debug, Clone)]
 pub enum MenuItem {
     Item { id: u32, label: String, checked: bool, enabled: bool },
@@ -496,8 +426,6 @@ impl MenuItem {
     }
 }
 
-/// # Safety
-/// `menu` harus handle menu yang valid.
 unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
     for item in items {
         match item {
@@ -510,13 +438,10 @@ unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
                     flags |= MF_GRAYED;
                 }
                 let text = wide(label);
-                // SAFETY: teks hidup selama pemanggilan; menu valid.
                 unsafe { AppendMenuW(menu, flags, *id as usize, PCWSTR(text.as_ptr()))? };
             }
-            // SAFETY: menu valid.
             MenuItem::Separator => unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())? },
             MenuItem::Submenu { label, items } => {
-                // SAFETY: submenu baru dimiliki menu induk setelah AppendMenuW.
                 unsafe {
                     let sub = CreatePopupMenu()?;
                     fill_menu(sub, items)?;
@@ -531,7 +456,6 @@ unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
 
 impl Window {
     pub fn dpi(&self) -> u32 {
-        // SAFETY: hwnd valid selama jendela hidup.
         unsafe { GetDpiForWindow(self.hwnd) }.max(96)
     }
 
@@ -539,53 +463,81 @@ impl Window {
         self.hwnd.0 as isize
     }
 
-    /// Memindahkan dan mengubah ukuran jendela (piksel fisik), tetap di atas.
     pub fn set_bounds(&self, x: i32, y: i32, w: i32, h: i32, show: bool) {
         let mut flags = SWP_NOACTIVATE;
         if show {
             flags |= SWP_SHOWWINDOW;
         }
-        // SAFETY: hwnd valid.
         unsafe {
             let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, w.max(1), h.max(1), flags);
         }
     }
 
+    pub fn set_region(&self, x: i32, y: i32, w: i32, h: i32) {
+        unsafe {
+            let rgn = CreateRectRgn(x, y, x + w.max(1), y + h.max(1));
+            if SetWindowRgn(self.hwnd, Some(rgn), true) == 0 {
+                let _ = DeleteObject(HGDIOBJ(rgn.0));
+            }
+        }
+    }
+
+    pub fn watch_outside(&self, on: bool) {
+        let target = self.hwnd.0 as isize;
+        OUTSIDE_HOOKS.with(|hooks| {
+            let mut hooks = hooks.borrow_mut();
+            if on == !hooks.is_empty() {
+                return;
+            }
+            if !on {
+                for h in hooks.drain(..) {
+                    unsafe {
+                        let _ = UnhookWinEvent(h);
+                    }
+                }
+                HOOK_TARGETS.with(|t| t.borrow_mut().retain(|&h| h != target));
+                return;
+            }
+            HOOK_TARGETS.with(|t| t.borrow_mut().push(target));
+            for event in [EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_CAPTURESTART] {
+                let hook = unsafe {
+                    SetWinEventHook(event, event, None, Some(win_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)
+                };
+                if !hook.is_invalid() {
+                    hooks.push(hook);
+                }
+            }
+        });
+    }
+
     pub fn show(&self) {
-        // SAFETY: hwnd valid.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
     }
 
     pub fn hide(&self) {
-        // SAFETY: hwnd valid.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
     }
 
     pub fn is_visible(&self) -> bool {
-        // SAFETY: hwnd valid.
         unsafe { IsWindowVisible(self.hwnd).as_bool() }
     }
 
-    /// Timer berulang; memanggil lagi dengan `id` sama mengganti intervalnya.
     pub fn set_timer(&self, id: usize, ms: u32) {
-        // SAFETY: hwnd valid; tanpa callback (pesan WM_TIMER).
         unsafe {
             SetTimer(Some(self.hwnd), id, ms.max(10), None);
         }
     }
 
     pub fn kill_timer(&self, id: usize) {
-        // SAFETY: hwnd valid.
         unsafe {
             let _ = KillTimer(Some(self.hwnd), id);
         }
     }
 
-    /// Mendaftarkan hotkey global. `false` bila bentrok dengan aplikasi lain.
     pub fn register_hotkey(&self, id: i32, hk: &Hotkey) -> bool {
         let mut mods: HOT_KEY_MODIFIERS = MOD_NOREPEAT;
         if hk.ctrl {
@@ -600,24 +552,16 @@ impl Window {
         if hk.win {
             mods |= MOD_WIN;
         }
-        // SAFETY: hwnd valid.
         unsafe { RegisterHotKey(Some(self.hwnd), id, mods, hk.vk as u32).is_ok() }
     }
 
     pub fn unregister_hotkey(&self, id: i32) {
-        // SAFETY: hwnd valid.
         unsafe {
             let _ = UnregisterHotKey(Some(self.hwnd), id);
         }
     }
 
-    /// Menampilkan menu di posisi kursor dan mengembalikan id yang dipilih.
-    ///
-    /// Menu Win32 hanya tertutup dengan benar bila pemiliknya jendela latar
-    /// depan, jadi jendela ini diaktifkan sebentar lalu fokus dikembalikan
-    /// ke aplikasi sebelumnya (PRD §3.3).
     pub fn popup_menu(&self, items: &[MenuItem]) -> Option<u32> {
-        // SAFETY: menu dibuat dan dihancurkan di sini; hwnd valid.
         unsafe {
             let menu = CreatePopupMenu().ok()?;
             if fill_menu(menu, items).is_err() {
@@ -638,7 +582,6 @@ impl Window {
         }
     }
 
-    /// Mendaftar ulang appbar setelah `explorer.exe` dimulai ulang.
     pub fn reregister_appbar(&self) {
         let mut abd = APPBARDATA {
             cbSize: size_of::<APPBARDATA>() as u32,
@@ -646,7 +589,6 @@ impl Window {
             uCallbackMessage: WM_APP_APPBAR,
             ..Default::default()
         };
-        // SAFETY: struktur valid selama pemanggilan.
         unsafe {
             SHAppBarMessage(ABM_REMOVE, &mut abd);
             SHAppBarMessage(ABM_NEW, &mut abd);
@@ -655,14 +597,12 @@ impl Window {
 
     pub fn message_box(&self, caption: &str, text: &str) {
         let (c, t) = (HSTRING::from(caption), HSTRING::from(text));
-        // SAFETY: string hidup selama pemanggilan.
         unsafe {
             MessageBoxW(Some(self.hwnd), &t, &c, MB_OK | MB_ICONINFORMATION);
         }
     }
 }
 
-/// Persegi monitor utama (piksel fisik) dan DPI efektifnya.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Monitor {
     pub left: i32,
@@ -679,7 +619,6 @@ impl Monitor {
 }
 
 pub fn primary_monitor() -> Monitor {
-    // SAFETY: struktur keluaran valid selama pemanggilan.
     unsafe {
         let hmon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
         let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -691,10 +630,8 @@ pub fn primary_monitor() -> Monitor {
     }
 }
 
-/// Menjalankan message loop sampai [`quit`] dipanggil.
 pub fn run_message_loop() {
     let mut msg = MSG::default();
-    // SAFETY: loop pesan standar pada thread UI.
     unsafe {
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
@@ -704,14 +641,11 @@ pub fn run_message_loop() {
 }
 
 pub fn quit() {
-    // SAFETY: hanya menaruh WM_QUIT di antrean thread ini.
     unsafe { PostQuitMessage(0) }
 }
 
-/// Memberi tahu instans yang sudah berjalan. `false` bila tidak ditemukan.
 pub fn notify_existing_instance() -> bool {
     let class = wide(CLASS_NAME);
-    // SAFETY: nama kelas hidup selama pemanggilan.
     unsafe {
         match FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) {
             Ok(h) if !h.is_invalid() => PostMessageW(Some(h), WM_APP_SECOND_INSTANCE, WPARAM(0), LPARAM(0)).is_ok(),
@@ -720,7 +654,6 @@ pub fn notify_existing_instance() -> bool {
     }
 }
 
-/// Ikon RGBA lurus (tidak premultiplied) berukuran persegi.
 #[derive(Debug, Clone)]
 pub struct IconImage {
     pub size: u32,
@@ -729,14 +662,12 @@ pub struct IconImage {
 
 fn create_hicon(img: &IconImage) -> Result<HICON> {
     let s = img.size as i32;
-    // SAFETY: buffer DIB ditulis dalam batasnya (size × size × 4 byte);
-    // bitmap sementara dibebaskan setelah ikon dibuat.
     unsafe {
         let bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
                 biWidth: s,
-                biHeight: -s, // top-down
+                biHeight: -s,
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -762,8 +693,6 @@ fn create_hicon(img: &IconImage) -> Result<HICON> {
     }
 }
 
-/// Ikon di area notifikasi, agar Notchi tetap bisa dibuka saat Island
-/// tersembunyi (mode "hanya saat ada aktivitas").
 pub struct TrayIcon {
     hwnd: HWND,
     icon: HICON,
@@ -802,11 +731,9 @@ impl TrayIcon {
 
     fn notify(&self, msg: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) -> bool {
         let nid = self.data();
-        // SAFETY: struktur valid selama pemanggilan.
         unsafe { Shell_NotifyIconW(msg, &nid).as_bool() }
     }
 
-    /// Dipanggil setelah `TaskbarCreated`.
     pub fn readd(&self) {
         self.notify(NIM_ADD);
     }
@@ -820,18 +747,15 @@ impl TrayIcon {
 impl Drop for TrayIcon {
     fn drop(&mut self) {
         self.notify(NIM_DELETE);
-        // SAFETY: ikon dimiliki struct ini.
         unsafe {
             let _ = DestroyIcon(self.icon);
         }
     }
 }
 
-/// Kotak pesan kesalahan tanpa jendela induk (sebelum Island siap).
 pub fn error_box(caption: &str, text: &str) {
     use windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR;
     let (c, t) = (HSTRING::from(caption), HSTRING::from(text));
-    // SAFETY: string hidup selama pemanggilan.
     unsafe {
         MessageBoxW(None, &t, &c, MB_OK | MB_ICONERROR);
     }

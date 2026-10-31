@@ -1,31 +1,17 @@
-//! Ekspresi maskot Notchi (PRD §2.6).
-//!
-//! Modul ini hanya menentukan ekspresi dan parameter gerak; gerak berulang
-//! (kedip, napas, ayun) dijalankan sebagai animasi compositor agar tidak
-//! membangunkan thread aplikasi.
-
 use crate::activity::ActivityKind;
 use crate::island::AlertKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expression {
-    /// Mata titik berkedip pelan, napas halus.
     Idle,
-    /// Musik atau video diputar: mata terpejam, tubuh berayun.
     Listening,
-    /// Timer berjalan: mata melirik angka hitung mundur.
     Watching,
-    /// Mengisi daya: mata berbentuk kilat kecil.
     Charging,
-    /// Baterai rendah: mata setengah terbuka, gerak lambat.
     Sleepy,
-    /// Notifikasi atau alert: mata membesar, melompat sekali.
     Surprised,
-    /// Layar penuh atau Reduce Motion: pose netral statis.
     Neutral,
 }
 
-/// Masukan untuk memilih ekspresi.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MascotContext<'a> {
     pub alert: Option<&'a AlertKind>,
@@ -53,24 +39,15 @@ pub fn expression_for(ctx: MascotContext<'_>) -> Expression {
     }
 }
 
-/// Parameter gerak yang diterjemahkan ke animasi compositor.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Motion {
-    /// Skala napas (min, maks) dan periode dalam ms.
     pub breathe: Option<(f32, f32, u32)>,
-    /// Periode kedip dalam ms.
     pub blink_every: Option<u32>,
-    /// Ayunan tubuh (derajat, periode ms).
     pub sway: Option<(f32, u32)>,
-    /// Melompat sekali dengan preset bouncy.
     pub hop: bool,
-    /// Skala vertikal mata (1 = bulat penuh, kecil = terpejam).
     pub eye_open: f32,
-    /// Skala ukuran mata.
     pub eye_scale: f32,
-    /// Geser mata ke samping, dalam fraksi lebar tubuh (lirikan).
     pub eye_shift: f32,
-    /// Mata digambar sebagai kilat.
     pub bolt_eyes: bool,
 }
 
@@ -113,7 +90,6 @@ pub fn motion_for(expr: Expression, reduce_motion: bool) -> Motion {
         Expression::Neutral => Motion::STILL,
     };
     if reduce_motion {
-        // Pose tetap dipertahankan, tetapi tanpa animasi apa pun.
         Motion { breathe: None, blink_every: None, sway: None, hop: false, ..m }
     } else {
         m

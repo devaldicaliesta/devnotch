@@ -1,11 +1,3 @@
-//! Sesi media dari kontrol media sistem Windows (PRD §3.2, §3.6).
-//!
-//! Berjalan di thread MTA sendiri. Event WinRT hanya memicu `Refresh`
-//! (digabung bila beruntun), lalu snapshot lengkap dikirim ke thread UI.
-//! Aplikasi tidak membaca isi layar, tidak menyadap jaringan, dan tidak
-//! menyuntik skrip ke browser: hanya sesi yang diumumkan ke Windows yang
-//! tampil.
-
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
@@ -26,16 +18,15 @@ use crate::window::{Event, UiProxy};
 #[derive(Debug, Clone)]
 pub enum MediaCommand {
     Refresh,
+    Quick,
     TogglePlayPause,
     Next,
     Prev,
-    /// Berpindah ke sesi lain (geser di Island).
     CycleSession(i32),
     SetFilter(SourceFilter),
     Shutdown,
 }
 
-/// Pegangan layanan media; menghentikan thread saat di-drop.
 #[derive(Debug)]
 pub struct MediaService {
     tx: Sender<MediaCommand>,
@@ -49,11 +40,9 @@ impl MediaService {
         let thread = std::thread::Builder::new()
             .name("notchi-media".into())
             .spawn(move || {
-                // SAFETY: inisialisasi COM MTA untuk thread ini, dilepas di akhir.
                 let com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
                 run(proxy, filter, tx2, rx);
                 if com {
-                    // SAFETY: berpasangan dengan CoInitializeEx di atas.
                     unsafe { CoUninitialize() };
                 }
             })
@@ -94,18 +83,23 @@ struct State {
     filter: SourceFilter,
     tx: Sender<MediaCommand>,
     subscribed: Option<Subscribed>,
-    /// AUMID yang dipilih pengguna lewat geser; `None` = ikuti sistem.
     preferred: Option<String>,
+    props: Option<(String, String, String)>,
+    position: (usize, usize),
     last_track: Option<(String, String, String)>,
+    last_sent: Option<MediaSnapshot>,
     track_id: u64,
 }
 
+const POSITION_TOLERANCE_MS: u64 = 1_500;
+
 fn refresh_handler<S: windows_core::RuntimeType + 'static, A: windows_core::RuntimeType + 'static>(
     tx: &Sender<MediaCommand>,
+    cmd: MediaCommand,
 ) -> TypedEventHandler<S, A> {
     let tx = tx.clone();
     TypedEventHandler::new(move |_, _| {
-        let _ = tx.send(MediaCommand::Refresh);
+        let _ = tx.send(cmd.clone());
         Ok(())
     })
 }
@@ -115,7 +109,6 @@ fn run(proxy: UiProxy, filter: SourceFilter, tx: Sender<MediaCommand>, rx: Recei
         Ok(m) => m,
         Err(_) => {
             proxy.post(Event::Media(None));
-            // Tetap melayani perintah agar pemanggil tidak terblokir.
             while let Ok(cmd) = rx.recv() {
                 if matches!(cmd, MediaCommand::Shutdown) {
                     return;
@@ -124,62 +117,90 @@ fn run(proxy: UiProxy, filter: SourceFilter, tx: Sender<MediaCommand>, rx: Recei
             return;
         }
     };
-    let t1 = manager.SessionsChanged(&refresh_handler(&tx)).ok();
-    let t2 = manager.CurrentSessionChanged(&refresh_handler(&tx)).ok();
+    let t1 = manager.SessionsChanged(&refresh_handler(&tx, MediaCommand::Refresh)).ok();
+    let t2 = manager.CurrentSessionChanged(&refresh_handler(&tx, MediaCommand::Refresh)).ok();
 
-    let mut st = State { proxy, filter, tx, subscribed: None, preferred: None, last_track: None, track_id: 0 };
-    let _ = st.tx.send(MediaCommand::Refresh);
+    let mut st = State {
+        proxy,
+        filter,
+        tx,
+        subscribed: None,
+        preferred: None,
+        props: None,
+        position: (0, 0),
+        last_track: None,
+        last_sent: None,
+        track_id: 0,
+    };
+    st.refresh(&manager, true);
 
-    while let Ok(mut cmd) = rx.recv() {
-        // Gabungkan Refresh beruntun menjadi satu.
-        if matches!(cmd, MediaCommand::Refresh) {
-            while let Ok(next) = rx.try_recv() {
-                if !matches!(next, MediaCommand::Refresh) {
-                    st.refresh(&manager);
-                    cmd = next;
-                    break;
+    while let Ok(first) = rx.recv() {
+        let mut pending = Some(first);
+        let mut full = false;
+        let mut quick = false;
+        while let Some(cmd) = pending.take().or_else(|| rx.try_recv().ok()) {
+            match cmd {
+                MediaCommand::Refresh => full = true,
+                MediaCommand::Quick => quick = true,
+                MediaCommand::TogglePlayPause => st.with_session(|s| {
+                    let _ = s.TryTogglePlayPauseAsync().and_then(|op| op.join());
+                }),
+                MediaCommand::Next => st.with_session(|s| {
+                    let _ = s.TrySkipNextAsync().and_then(|op| op.join());
+                }),
+                MediaCommand::Prev => st.with_session(|s| {
+                    let _ = s.TrySkipPreviousAsync().and_then(|op| op.join());
+                }),
+                MediaCommand::CycleSession(step) => {
+                    st.cycle(&manager, step);
+                    full = true;
+                }
+                MediaCommand::SetFilter(f) => {
+                    st.filter = f;
+                    st.preferred = None;
+                    full = true;
+                }
+                MediaCommand::Shutdown => {
+                    st.shutdown(&manager, t1, t2);
+                    return;
                 }
             }
         }
-        match cmd {
-            MediaCommand::Refresh => st.refresh(&manager),
-            MediaCommand::TogglePlayPause => st.with_session(|s| {
-                let _ = s.TryTogglePlayPauseAsync().and_then(|op| op.join());
-            }),
-            MediaCommand::Next => st.with_session(|s| {
-                let _ = s.TrySkipNextAsync().and_then(|op| op.join());
-            }),
-            MediaCommand::Prev => st.with_session(|s| {
-                let _ = s.TrySkipPreviousAsync().and_then(|op| op.join());
-            }),
-            MediaCommand::CycleSession(step) => {
-                st.cycle(&manager, step);
-                st.refresh(&manager);
-            }
-            MediaCommand::SetFilter(f) => {
-                st.filter = f;
-                st.preferred = None;
-                st.refresh(&manager);
-            }
-            MediaCommand::Shutdown => break,
+        if full || quick {
+            st.refresh(&manager, full);
         }
     }
-    if let Some(s) = st.subscribed.take() {
-        s.unsubscribe();
-    }
-    if let Some(t) = t1 {
-        let _ = manager.RemoveSessionsChanged(t);
-    }
-    if let Some(t) = t2 {
-        let _ = manager.RemoveCurrentSessionChanged(t);
-    }
+    st.shutdown(&manager, t1, t2);
 }
 
 fn aumid(s: &Session) -> String {
     s.SourceAppUserModelId().map(|h| h.to_string()).unwrap_or_default()
 }
 
+fn read_props(session: &Session) -> (String, String, String) {
+    match session.TryGetMediaPropertiesAsync().and_then(|op| op.join()) {
+        Ok(p) => (
+            p.Title().map(|s| s.to_string()).unwrap_or_default(),
+            p.Artist().map(|s| s.to_string()).unwrap_or_default(),
+            p.AlbumTitle().map(|s| s.to_string()).unwrap_or_default(),
+        ),
+        Err(_) => Default::default(),
+    }
+}
+
 impl State {
+    fn shutdown(&mut self, manager: &Manager, t1: Option<i64>, t2: Option<i64>) {
+        if let Some(s) = self.subscribed.take() {
+            s.unsubscribe();
+        }
+        if let Some(t) = t1 {
+            let _ = manager.RemoveSessionsChanged(t);
+        }
+        if let Some(t) = t2 {
+            let _ = manager.RemoveCurrentSessionChanged(t);
+        }
+    }
+
     fn with_session(&self, f: impl FnOnce(&Session)) {
         if let Some(s) = &self.subscribed {
             f(&s.session);
@@ -211,7 +232,6 @@ impl State {
             }
             self.preferred = None;
         }
-        // Sesi yang dinilai sistem paling mungkin dikontrol pengguna.
         if let Ok(cur) = manager.GetCurrentSession() {
             let id = aumid(&cur);
             if let Some(i) = sessions.iter().position(|s| aumid(s) == id) {
@@ -221,41 +241,61 @@ impl State {
         (sessions.first().cloned(), 0, count)
     }
 
-    fn subscribe(&mut self, session: &Session) {
-        let same = self.subscribed.as_ref().is_some_and(|s| aumid(&s.session) == aumid(session) && s.session == *session);
-        if same {
-            return;
+    fn subscribe(&mut self, session: &Session) -> bool {
+        if self.subscribed.as_ref().is_some_and(|s| s.session == *session) {
+            return false;
         }
         if let Some(old) = self.subscribed.take() {
             old.unsubscribe();
         }
-        let t0 = session.MediaPropertiesChanged(&refresh_handler(&self.tx)).unwrap_or(0);
-        let t1 = session.PlaybackInfoChanged(&refresh_handler(&self.tx)).unwrap_or(0);
-        let t2 = session.TimelinePropertiesChanged(&refresh_handler(&self.tx)).unwrap_or(0);
+        let t0 = session.MediaPropertiesChanged(&refresh_handler(&self.tx, MediaCommand::Refresh)).unwrap_or(0);
+        let t1 = session.PlaybackInfoChanged(&refresh_handler(&self.tx, MediaCommand::Quick)).unwrap_or(0);
+        let t2 = session.TimelinePropertiesChanged(&refresh_handler(&self.tx, MediaCommand::Quick)).unwrap_or(0);
         self.subscribed = Some(Subscribed { session: session.clone(), tokens: [t0, t1, t2] });
+        true
     }
 
-    fn refresh(&mut self, manager: &Manager) {
-        let (session, index, count) = self.choose(manager);
+    fn post(&mut self, snap: Option<MediaSnapshot>) {
+        let same = match (&self.last_sent, &snap) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.same_as(b, now_ms(), POSITION_TOLERANCE_MS),
+            _ => false,
+        };
+        if !same {
+            self.proxy.post(Event::Media(snap.clone()));
+            self.last_sent = snap;
+        }
+    }
+
+    fn refresh(&mut self, manager: &Manager, full: bool) {
+        let current = self.subscribed.as_ref().map(|s| s.session.clone()).filter(|_| !full);
+        let (session, index, count) = match current {
+            Some(s) => (Some(s), self.position.0, self.position.1),
+            None => self.choose(manager),
+        };
         let Some(session) = session else {
             if let Some(old) = self.subscribed.take() {
                 old.unsubscribe();
             }
             self.last_track = None;
-            self.proxy.post(Event::Media(None));
+            self.props = None;
+            self.post(None);
             return;
         };
-        self.subscribe(&session);
-        let snap = self.snapshot(&session, index, count);
+        self.position = (index, count);
+        let switched = self.subscribe(&session);
+        if full || switched || self.props.is_none() {
+            self.props = Some(read_props(&session));
+        }
+        let mut snap = self.snapshot(&session, index, count);
         let key = (snap.source_app_id.clone(), snap.title.clone(), snap.artist.clone());
         let changed = self.last_track.as_ref() != Some(&key);
         if changed {
             self.track_id += 1;
             self.last_track = Some(key);
         }
-        let mut snap = snap;
         snap.track_id = self.track_id;
-        self.proxy.post(Event::Media(Some(snap)));
+        self.post(Some(snap));
         if changed {
             let art = load_artwork(&session);
             self.proxy.post(Event::MediaArt { track_id: self.track_id, art });
@@ -269,10 +309,10 @@ impl State {
             session_count: count,
             ..Default::default()
         };
-        if let Ok(props) = session.TryGetMediaPropertiesAsync().and_then(|op| op.join()) {
-            snap.title = props.Title().map(|s| s.to_string()).unwrap_or_default();
-            snap.artist = props.Artist().map(|s| s.to_string()).unwrap_or_default();
-            snap.album = props.AlbumTitle().map(|s| s.to_string()).unwrap_or_default();
+        if let Some((title, artist, album)) = &self.props {
+            snap.title = title.clone();
+            snap.artist = artist.clone();
+            snap.album = album.clone();
         }
         if let Ok(info) = session.GetPlaybackInfo() {
             snap.status = match info.PlaybackStatus() {
@@ -297,7 +337,6 @@ impl State {
             let start = tl.StartTime().map(ms).unwrap_or(0);
             let end = tl.EndTime().map(ms).unwrap_or(0);
             let pos = tl.Position().map(ms).unwrap_or(0);
-            // Umur laporan posisi: sekarang dikurangi LastUpdatedTime.
             let age = tl
                 .LastUpdatedTime()
                 .ok()
@@ -319,9 +358,7 @@ impl State {
     }
 }
 
-/// Waktu sekarang dalam satuan 100 ns sejak 1601 (format `DateTime` WinRT).
 fn windows_filetime_now() -> i64 {
-    // SAFETY: fungsi tanpa argumen yang hanya membaca jam sistem.
     let ft = unsafe { windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime() };
     ((ft.dwHighDateTime as i64) << 32) | ft.dwLowDateTime as i64
 }
@@ -338,6 +375,5 @@ fn load_artwork(session: &Session) -> Option<notchi_core::media::Artwork> {
     let loaded = reader.LoadAsync(size as u32).ok()?.join().ok()? as usize;
     let mut buf = vec![0u8; loaded];
     reader.ReadBytes(&mut buf).ok()?;
-    // Sampul tidak pernah disimpan ke disk; hanya versi kecil di memori.
     decode_artwork(&buf, 192).ok()
 }

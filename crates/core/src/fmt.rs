@@ -1,14 +1,9 @@
-//! Format waktu untuk tampilan.
-
 use crate::Ms;
 
-/// `m:ss` atau `h:mm:ss`, dibulatkan ke atas agar hitung mundur tidak
-/// menampilkan 0:00 sebelum benar-benar selesai.
 pub fn countdown(remaining: Ms) -> String {
     clock(remaining.div_ceil(1000))
 }
 
-/// `m:ss` atau `h:mm:ss`, dibulatkan ke bawah (stopwatch, progres media).
 pub fn elapsed(ms: Ms) -> String {
     clock(ms / 1000)
 }

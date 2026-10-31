@@ -2,7 +2,7 @@
 
 Island interaktif, menu bar, dan Dock bergaya macOS untuk Windows 11, ditulis dengan Rust agar ringan.
 
-> **Status:** tahap perencanaan. Belum ada kode; dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
+> **Status:** Island Fase 1 sudah berjalan (Rust). Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
 
 ## Rencana singkat
 
@@ -10,7 +10,7 @@ Island interaktif, menu bar, dan Dock bergaya macOS untuk Windows 11, ditulis de
 - **Dock dan menu bar** menyusul (Fase 3), lalu panel kontrol cepat dan launcher (Fase 4).
 - Hanya **Windows 11 22H2 ke atas**.
 - Dikemas sebagai **MSIX** (untuk notifikasi) dan sebagai `.exe` portabel.
-- Target: ≤ 60 MB RAM dan ≤ 0,3% CPU saat idle, tanpa hak admin, tanpa telemetri.
+- Target: ≤ 60 MB RAM dan ≤ 0,3% CPU saat idle, tanpa hak admin, tanpa telemetri. Terukur pada Island Fase 1: 0% CPU dan 1–3 MB private working set saat diam.
 
 ## Gratis dan sumber terbuka
 

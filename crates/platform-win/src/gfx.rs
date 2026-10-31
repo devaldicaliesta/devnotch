@@ -1,10 +1,3 @@
-//! Rasterisasi teks, ikon, dan gambar ke permukaan Composition dengan
-//! Direct2D/DirectWrite (PRD §6.1, §6.4).
-//!
-//! Setiap permukaan digambar sekali per perubahan isi, lalu dianimasikan
-//! sebagai tekstur oleh compositor. Satu perangkat D3D11 dipakai bersama.
-//! Ukuran piksel permukaan = dp × skala DPI, sehingga teks tetap tajam.
-
 use notchi_core::color::Color;
 use notchi_core::geom::Size;
 use notchi_core::media::Artwork;
@@ -13,13 +6,13 @@ use windows::Graphics::DirectX::{DirectXAlphaMode, DirectXPixelFormat};
 use windows::UI::Composition::{CompositionDrawingSurface, CompositionGraphicsDevice, Compositor};
 use windows::Win32::Foundation::{HMODULE, POINT};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
+    D2D_RECT_F, D2D_SIZE_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
     D2D1_FIGURE_END_CLOSED, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
+    D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-    D2D1CreateFactory, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1,
+    D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1CreateFactory, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1,
 };
 use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP};
 use windows::Win32::Graphics::Direct3D11::{
@@ -33,7 +26,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection, IDWriteTextLayout,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
-use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+use windows::Win32::Graphics::Dxgi::{IDXGIDevice, IDXGIDevice3};
 use windows::Win32::Graphics::Imaging::{
     CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICImagingFactory, WICBitmapDitherTypeNone,
     WICBitmapInterpolationModeHighQualityCubic, WICBitmapPaletteTypeMedianCut, WICDecodeMetadataCacheOnDemand,
@@ -69,11 +62,8 @@ pub struct TextStyle {
     pub weight: Weight,
     pub color: Color,
     pub max_width: f32,
-    /// Angka berlebar sama agar hitung mundur tidak bergoyang.
     pub tabular: bool,
-    /// Pakai font ikon sistem (Segoe Fluent Icons).
     pub icon: bool,
-    /// Rata tengah di dalam `max_width` (lebar permukaan = `max_width`).
     pub center: bool,
 }
 
@@ -103,7 +93,6 @@ impl TextStyle {
     }
 }
 
-/// Permukaan siap pakai; `size` dalam dp.
 pub struct Surface {
     pub surface: CompositionDrawingSurface,
     pub size: Size,
@@ -116,8 +105,8 @@ impl std::fmt::Debug for Surface {
 }
 
 pub struct Gfx {
-    _d3d: ID3D11Device,
-    _d2d_device: ID2D1Device,
+    d3d: ID3D11Device,
+    d2d_device: ID2D1Device,
     d2d_factory: ID2D1Factory1,
     dwrite: IDWriteFactory,
     graphics: CompositionGraphicsDevice,
@@ -131,9 +120,10 @@ impl std::fmt::Debug for Gfx {
     }
 }
 
+const MAX_TEXTURE_BYTES: u64 = 1024 * 1024;
+
 fn create_d3d(driver: D3D_DRIVER_TYPE) -> Result<ID3D11Device> {
     let mut device = None;
-    // SAFETY: pointer keluaran valid selama pemanggilan.
     unsafe {
         D3D11CreateDevice(
             None,
@@ -153,30 +143,24 @@ fn create_d3d(driver: D3D_DRIVER_TYPE) -> Result<ID3D11Device> {
 fn has_family(collection: &IDWriteFontCollection, name: &HSTRING) -> bool {
     let mut index = 0u32;
     let mut exists = windows::core::BOOL(0);
-    // SAFETY: nama dan pointer keluaran valid selama pemanggilan.
     unsafe { collection.FindFamilyName(name, &mut index, &mut exists).is_ok() && exists.as_bool() }
 }
 
 impl Gfx {
     pub fn new(compositor: &Compositor) -> Result<Self> {
-        // GPU perangkat keras bila ada; WARP (perangkat lunak) sebagai cadangan.
-        let d3d = create_d3d(D3D_DRIVER_TYPE_HARDWARE).or_else(|_| create_d3d(D3D_DRIVER_TYPE_WARP))?;
+        let d3d = create_d3d(D3D_DRIVER_TYPE_WARP).or_else(|_| create_d3d(D3D_DRIVER_TYPE_HARDWARE))?;
         let dxgi: IDXGIDevice = d3d.cast()?;
-        // SAFETY: pembuatan factory dan device dengan argumen valid.
         let (d2d_factory, d2d_device, dwrite) = unsafe {
             let factory: ID2D1Factory1 = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let device = factory.CreateDevice(&dxgi)?;
+            device.SetMaximumTextureMemory(MAX_TEXTURE_BYTES);
             let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             (factory, device, dwrite)
         };
         let interop: ICompositorInterop = compositor.cast()?;
-        // SAFETY: device D2D valid dan hidup selama `Gfx` hidup.
         let graphics = unsafe { interop.CreateGraphicsDevice(&d2d_device)? };
 
-        // Inter (OFL) bila terpasang; Segoe UI Variable bawaan Windows 11
-        // sebagai cadangan. SF Pro sengaja tidak dipakai (PRD §2.5).
         let mut collection = None;
-        // SAFETY: pointer keluaran valid.
         unsafe { dwrite.GetSystemFontCollection(&mut collection, false)? };
         let pick = |names: &[&str]| -> HSTRING {
             let c = collection.as_ref();
@@ -188,7 +172,20 @@ impl Gfx {
         };
         let text_family = pick(&["Inter", "Segoe UI Variable Text", "Segoe UI"]);
         let icon_family = pick(&["Segoe Fluent Icons", "Segoe MDL2 Assets"]);
-        Ok(Self { _d3d: d3d, _d2d_device: d2d_device, d2d_factory, dwrite, graphics, text_family, icon_family })
+        Ok(Self { d3d, d2d_device, d2d_factory, dwrite, graphics, text_family, icon_family })
+    }
+
+    pub fn trim(&self) {
+        unsafe {
+            self.d2d_device.ClearResources(0);
+            if let Ok(ctx) = self.d3d.GetImmediateContext() {
+                ctx.ClearState();
+                ctx.Flush();
+            }
+            if let Ok(dxgi) = self.d3d.cast::<IDXGIDevice3>() {
+                dxgi.Trim();
+            }
+        }
     }
 
     pub fn text_family(&self) -> String {
@@ -198,7 +195,6 @@ impl Gfx {
     fn layout(&self, text: &str, style: &TextStyle) -> Result<(IDWriteTextLayout, Size)> {
         let family = if style.icon { &self.icon_family } else { &self.text_family };
         let utf16: Vec<u16> = text.encode_utf16().collect();
-        // SAFETY: semua argumen valid selama pemanggilan.
         unsafe {
             let format = self.dwrite.CreateTextFormat(
                 family,
@@ -233,7 +229,6 @@ impl Gfx {
         }
     }
 
-    /// Ukuran teks dalam dp tanpa menggambarnya.
     pub fn measure(&self, text: &str, style: &TextStyle) -> Result<Size> {
         Ok(self.layout(text, style)?.1)
     }
@@ -248,10 +243,7 @@ impl Gfx {
         )?;
         let interop: ICompositionDrawingSurfaceInterop = surface.cast()?;
         let mut offset = POINT::default();
-        // SAFETY: BeginDraw/EndDraw berpasangan; konteks hanya dipakai di
-        // antara keduanya.
         let dc: ID2D1DeviceContext = unsafe { interop.BeginDraw(None, &mut offset)? };
-        // SAFETY: konteks valid sampai EndDraw.
         unsafe {
             dc.SetDpi(96.0 * scale, 96.0 * scale);
             dc.SetTransform(&Matrix3x2::translation(offset.x as f32 / scale, offset.y as f32 / scale));
@@ -259,7 +251,6 @@ impl Gfx {
             dc.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         }
         let painted = paint(&dc);
-        // SAFETY: menutup BeginDraw di atas.
         unsafe { interop.EndDraw()? };
         painted?;
         Ok(Surface { surface, size: Size::new(pw / scale, ph / scale) })
@@ -269,7 +260,6 @@ impl Gfx {
         let (layout, size) = self.layout(text, style)?;
         let color = d2d_color(style.color);
         self.draw(size, scale, |dc| {
-            // SAFETY: konteks valid selama paint; layout dan brush hidup.
             unsafe {
                 let brush = dc.CreateSolidColorBrush(&color, None)?;
                 dc.DrawTextLayout(
@@ -283,10 +273,8 @@ impl Gfx {
         })
     }
 
-    /// Gambar diisi penuh (crop tengah) ke ukuran `size`.
     pub fn image(&self, art: &Artwork, size: Size, scale: f32) -> Result<Surface> {
         let (iw, ih) = (art.width as f32, art.height as f32);
-        // Crop tengah agar rasio `size` terisi tanpa distorsi.
         let target = size.w / size.h.max(1.0);
         let (sw, sh) = if iw / ih > target { (ih * target, ih) } else { (iw, iw / target) };
         let src = D2D_RECT_F { left: (iw - sw) / 2.0, top: (ih - sh) / 2.0, right: (iw + sw) / 2.0, bottom: (ih + sh) / 2.0 };
@@ -299,8 +287,6 @@ impl Gfx {
                 bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
                 colorContext: std::mem::ManuallyDrop::new(None),
             };
-            // SAFETY: buffer berukuran width × height × 4 (dijamin oleh
-            // `decode_artwork`) dan hidup selama pemanggilan.
             unsafe {
                 let bmp = dc.CreateBitmap(
                     D2D_SIZE_U { width: art.width, height: art.height },
@@ -314,13 +300,46 @@ impl Gfx {
         })
     }
 
-    /// Ikon kilat untuk mata Notchi saat mengisi daya.
+    pub fn fillet(&self, r: f32, overlap: f32, color: Color, scale: f32, right: bool) -> Result<Surface> {
+        let c = d2d_color(color);
+        let w = r + overlap;
+        self.draw(Size::new(w, r), scale, |dc| {
+            unsafe {
+                let geom = self.d2d_factory.CreatePathGeometry()?;
+                let sink = geom.Open()?;
+                let arc = |to: Vector2| D2D1_ARC_SEGMENT {
+                    point: to,
+                    size: D2D_SIZE_F { width: r, height: r },
+                    rotationAngle: 0.0,
+                    sweepDirection: D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE,
+                    arcSize: D2D1_ARC_SIZE_SMALL,
+                };
+                if right {
+                    sink.BeginFigure(Vector2::new(0.0, 0.0), D2D1_FIGURE_BEGIN_FILLED);
+                    sink.AddLine(Vector2::new(w, 0.0));
+                    sink.AddArc(&arc(Vector2::new(overlap, r)));
+                    sink.AddLine(Vector2::new(0.0, r));
+                } else {
+                    sink.BeginFigure(Vector2::new(0.0, 0.0), D2D1_FIGURE_BEGIN_FILLED);
+                    sink.AddLine(Vector2::new(w, 0.0));
+                    sink.AddLine(Vector2::new(w, r));
+                    sink.AddLine(Vector2::new(r, r));
+                    sink.AddArc(&arc(Vector2::new(0.0, 0.0)));
+                }
+                sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                sink.Close()?;
+                let brush = dc.CreateSolidColorBrush(&c, None)?;
+                dc.FillGeometry(&geom, &brush, None);
+            }
+            Ok(())
+        })
+    }
+
     pub fn bolt(&self, size: Size, color: Color, scale: f32) -> Result<Surface> {
         let pts: [(f32, f32); 7] =
             [(0.62, 0.0), (0.12, 0.58), (0.46, 0.58), (0.36, 1.0), (0.88, 0.40), (0.54, 0.40), (0.66, 0.0)];
         let c = d2d_color(color);
         self.draw(size, scale, |dc| {
-            // SAFETY: geometri dan brush dibuat dari factory/konteks yang valid.
             unsafe {
                 let geom = self.d2d_factory.CreatePathGeometry()?;
                 let sink = geom.Open()?;
@@ -342,19 +361,13 @@ fn d2d_color(c: Color) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r: c.r as f32 / 255.0, g: c.g as f32 / 255.0, b: c.b as f32 / 255.0, a: c.a as f32 / 255.0 }
 }
 
-/// Batas ukuran berkas sampul yang mau didekode.
 pub const MAX_ART_BYTES: usize = 8 * 1024 * 1024;
 
-/// Mendekode sampul album (PNG/JPEG/…) menjadi BGRA premultiplied dengan
-/// sisi terpanjang `max_px` (maks. 512 px, PRD §3.6). Dipanggil dari thread
-/// yang sudah menginisialisasi COM.
 pub fn decode_artwork(bytes: &[u8], max_px: u32) -> Result<Artwork> {
     if bytes.is_empty() || bytes.len() > MAX_ART_BYTES {
         return Err(windows_core::Error::from_hresult(windows::Win32::Foundation::E_INVALIDARG));
     }
     let max_px = max_px.clamp(16, 512);
-    // SAFETY: objek WIC dibuat dan dipakai di thread ini; buffer `bytes`
-    // hidup sampai decoder selesai (CopyPixels di akhir fungsi).
     unsafe {
         let factory: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
         let stream = factory.CreateStream()?;

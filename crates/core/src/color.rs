@@ -1,5 +1,3 @@
-//! Token warna (PRD §2.6) dan pemeriksaan kontras WCAG.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
     pub r: u8,
@@ -17,19 +15,16 @@ impl Color {
         Self { a, ..self }
     }
 
-    /// Warna dengan opasitas `fraction` (0–1).
     pub fn with_opacity(self, fraction: f32) -> Self {
         self.with_alpha((fraction.clamp(0.0, 1.0) * 255.0).round() as u8)
     }
 
-    /// Hasil komposit warna (yang mungkin transparan) di atas latar opak.
     pub fn over(self, bg: Color) -> Color {
         let a = self.a as f32 / 255.0;
         let mix = |f: u8, b: u8| (f as f32 * a + b as f32 * (1.0 - a)).round() as u8;
         Color { r: mix(self.r, bg.r), g: mix(self.g, bg.g), b: mix(self.b, bg.b), a: 255 }
     }
 
-    /// Luminans relatif menurut WCAG 2.x.
     pub fn relative_luminance(self) -> f32 {
         fn channel(c: u8) -> f32 {
             let s = c as f32 / 255.0;
@@ -38,7 +33,6 @@ impl Color {
         0.2126 * channel(self.r) + 0.7152 * channel(self.g) + 0.0722 * channel(self.b)
     }
 
-    /// Rasio kontras WCAG antara dua warna opak.
     pub fn contrast_ratio(self, other: Color) -> f32 {
         let (a, b) = (self.relative_luminance(), other.relative_luminance());
         let (hi, lo) = if a > b { (a, b) } else { (b, a) };
@@ -50,12 +44,10 @@ pub const ISLAND_BG: Color = Color::rgb(0x000000);
 pub const TEXT_PRIMARY: Color = Color::rgb(0xFFFFFF);
 pub const STATUS_CRITICAL: Color = Color::rgb(0xFF5A5F);
 
-/// Subjudul: putih 60%.
 pub fn text_secondary() -> Color {
     TEXT_PRIMARY.with_opacity(0.6)
 }
 
-/// Varian tubuh maskot Notchi.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Skin {
     #[default]
@@ -98,12 +90,10 @@ impl Skin {
     }
 }
 
-/// Aksen pengisian daya.
 pub fn accent_charging() -> Color {
     Skin::Mint.color()
 }
 
-/// Aksen alert.
 pub fn accent_alert() -> Color {
     Skin::Lemon.color()
 }

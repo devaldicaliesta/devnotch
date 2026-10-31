@@ -1,10 +1,3 @@
-//! Fitur Island Notchi (PRD §3): pil interaktif di tengah atas layar dengan
-//! media, timer, stopwatch, alert daya, HUD volume, dan maskot Notchi.
-//!
-//! Crate ini tidak memakai `unsafe`; semua akses Windows lewat
-//! `notchi-platform-win`, dan semua keputusan (state, prioritas, layout)
-//! diambil oleh `notchi-core`.
-
 #![forbid(unsafe_code)]
 
 mod ui;
@@ -33,7 +26,7 @@ use notchi_platform_win::media::{MediaCommand, MediaService};
 use notchi_platform_win::window::{
     Event, IconImage, MenuItem, MouseButton, OwnedWindow, TrayEvent, TrayIcon, UiProxy, Window, primary_monitor, quit,
 };
-use notchi_platform_win::{Result, fswatch, now_ms, power, shell};
+use notchi_platform_win::{Result, fswatch, now_ms, power, shell, sys};
 
 use crate::ui::{Pill, Ui};
 use crate::views::{Dyn, Model, Slot};
@@ -44,6 +37,8 @@ const T_TICK: usize = 3;
 const T_DEADLINE: usize = 4;
 const T_CONFIG: usize = 5;
 const T_CLOCK: usize = 6;
+const T_RETRACT: usize = 7;
+const T_TRIM: usize = 8;
 
 const HK_TOGGLE: i32 = 1;
 const HK_ESC: i32 = 2;
@@ -58,6 +53,7 @@ const M_MODE: u32 = 200;
 const M_HIDE: u32 = 300;
 const M_SHOW: u32 = 301;
 const M_LOGIN: u32 = 400;
+const M_AUTOHIDE: u32 = 410;
 const M_SETTINGS: u32 = 500;
 const M_ABOUT: u32 = 600;
 const M_QUIT: u32 = 900;
@@ -65,8 +61,15 @@ const M_QUIT: u32 = 900;
 const LONG_PRESS_MS: u32 = 350;
 const SWIPE_DP: f32 = 36.0;
 const HOUR_MS: Ms = 3_600_000;
+const PEEK_MS: Ms = 2_500;
+const RETRACT_DELAY_MS: u32 = 300;
+const COLLAPSE_DELAY_MS: u32 = 1_500;
+const TRIM_DELAY_MS: u32 = 4_000;
+const CONTENT_DELAY_MS: f32 = 70.0;
+const CONTENT_FADE_MS: f32 = 130.0;
+const RETIRE_FADE_MS: f32 = 80.0;
+const REVEAL: SpringPreset = SpringPreset::new(0.36, 0.30);
 
-/// Lokasi berkas pengguna.
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub dir: PathBuf,
@@ -74,7 +77,6 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// `%APPDATA%\Notchi\config.toml` (PRD §5.4).
     pub fn default_location() -> Paths {
         let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
         let dir = base.join("Notchi");
@@ -82,7 +84,6 @@ impl Paths {
     }
 }
 
-/// Membaca konfigurasi; membuat berkas default bila belum ada.
 pub fn load_config(paths: &Paths) -> (Config, String, Vec<Warning>) {
     let _ = std::fs::create_dir_all(&paths.dir);
     if !paths.config.exists() {
@@ -108,7 +109,6 @@ enum ViewKind {
     Hud,
 }
 
-/// Semua yang, bila berubah, membuat isi digambar ulang.
 #[derive(Debug, Clone, PartialEq)]
 struct ViewKey {
     kind: ViewKind,
@@ -132,7 +132,6 @@ struct ViewKey {
 struct Content {
     root: ContainerVisual,
     d: Dyn,
-    /// Sinkronisasi terakhir batang progres: (track, posisi dilaporkan, diputar).
     progress_sync: Option<(u64, Ms, bool)>,
 }
 
@@ -150,6 +149,14 @@ pub struct IslandApp {
     stage: ContainerVisual,
     main: Pill,
     bubble: Pill,
+    retracted: bool,
+    scale_rest: f32,
+    last_ordered: Vec<ActivityKind>,
+    full_shape: Shape,
+    region: Size,
+    settled_region: Size,
+    watching: bool,
+    mem_dirty: bool,
     content: Option<Content>,
     bubble_content: Option<ContainerVisual>,
     retired: Vec<(u64, ContainerVisual, bool)>,
@@ -198,11 +205,9 @@ fn slot_of(kind: ActivityKind) -> Slot {
 }
 
 impl IslandApp {
-    /// Membuat Island untuk jendela `owned` lalu memasang handler-nya.
     pub fn install(owned: &mut OwnedWindow, paths: Paths, exe: PathBuf) -> Result<()> {
         owned.register_power_notifications();
         owned.register_fullscreen_notifications();
-        owned.watch_foreground();
         let mut app = IslandApp::new(owned.window(), owned.proxy(), paths, exe)?;
         app.update();
         owned.set_handler(move |_, ev| app.handle(ev));
@@ -222,12 +227,9 @@ impl IslandApp {
         stage.SetScale(v3(scale, scale, 1.0))?;
         let bubble = Pill::new(&ui, &stage, ISLAND_BG)?;
         let main = Pill::new(&ui, &stage, ISLAND_BG)?;
-        let top = cfg.island.top_margin;
         for (pill, size) in [(&main, layout::IDLE), (&bubble, BUBBLE)] {
             pill.visual.SetSize(v2(size.w, size.h))?;
-            pill.visual.SetOffset(v3(0.0, top, 0.0))?;
             pill.visual.SetOpacity(0.0)?;
-            pill.visual.SetCenterPoint(v3(size.w / 2.0, size.h / 2.0, 0.0))?;
         }
 
         let mut app = IslandApp {
@@ -238,6 +240,14 @@ impl IslandApp {
             stage,
             main,
             bubble,
+            retracted: false,
+            scale_rest: 1.0,
+            last_ordered: Vec::new(),
+            full_shape: Shape::single(layout::IDLE),
+            region: Size::new(0.0, 0.0),
+            settled_region: Size::new(0.0, 0.0),
+            watching: false,
+            mem_dirty: true,
             content: None,
             bubble_content: None,
             retired: Vec::new(),
@@ -273,26 +283,20 @@ impl IslandApp {
         app.tray = TrayIcon::new(&app.window, &icon, t(cfg.language, Text::TrayTooltip)).ok();
         app.apply_config(cfg, warnings, true);
         fswatch::watch_dir(&app.paths.dir, app.proxy.clone());
-        // Pembacaan awal: tidak memicu alert colok/cabut, hanya baterai rendah.
         if app.cfg.power.enabled {
             let _ = app.battery.update(power::read()).map(|e| app.power_alert(e));
         }
         app.check_fullscreen();
-        app.place_window(Shape::single(layout::IDLE), false);
+        app.layout_window();
         Ok(app)
     }
-
-    fn top(&self) -> f32 {
-        self.cfg.island.top_margin
-    }
-
-    // ---- konfigurasi -------------------------------------------------
 
     fn apply_config(&mut self, new: Config, warnings: Vec<Warning>, first: bool) {
         let old = std::mem::replace(&mut self.cfg, new);
         self.warnings = warnings;
         let cfg = &self.cfg;
         self.island.set_mode(cfg.island.mode);
+        self.island.set_autohide(cfg.island.autohide);
 
         if first || old.island.hotkey != cfg.island.hotkey {
             self.window.unregister_hotkey(HK_TOGGLE);
@@ -318,23 +322,18 @@ impl IslandApp {
         if first || old.power.low_thresholds != cfg.power.low_thresholds {
             self.battery = BatteryMonitor::new(&cfg.power.low_thresholds);
         }
-        if first || old.launch_at_login != cfg.launch_at_login {
-            if shell::launch_at_login_enabled() != cfg.launch_at_login {
+        if (first || old.launch_at_login != cfg.launch_at_login)
+            && shell::launch_at_login_enabled() != cfg.launch_at_login {
                 shell::set_launch_at_login(cfg.launch_at_login, &self.exe);
             }
-        }
-        if !first && old.mascot.skin != cfg.mascot.skin {
-            if let Some(tray) = self.tray.take() {
+        if !first && old.mascot.skin != cfg.mascot.skin
+            && let Some(tray) = self.tray.take() {
                 drop(tray);
                 let icon = IconImage { size: 32, rgba: mascot_rgba(32, self.cfg.mascot.skin) };
                 self.tray = TrayIcon::new(&self.window, &icon, "Notchi").ok();
             }
-        }
-        if !first && old.island.top_margin != self.cfg.island.top_margin {
-            let top = self.top();
-            let _ = self.ui.anim.spring(&self.main.visual, "Offset.Y", top, SpringPreset::SMOOTH);
-            let _ = self.ui.anim.spring(&self.bubble.visual, "Offset.Y", top, SpringPreset::SMOOTH);
-            self.place_window(self.shape, self.visible);
+        if first || old.liquid != self.cfg.liquid {
+            self.apply_liquid();
         }
         self.refresh_motion();
         self.update_tooltip();
@@ -363,7 +362,6 @@ impl IslandApp {
         self.apply_config(cfg, warnings, false);
     }
 
-    /// Mengubah satu nilai di `config.toml` tanpa menghapus komentar pengguna.
     fn persist(&mut self, section: &str, key: &str, value: &str) {
         let text = config::set_value(&self.cfg_text, section, key, value);
         if std::fs::write(&self.paths.config, &text).is_ok() {
@@ -385,10 +383,11 @@ impl IslandApp {
         }
     }
 
-    // ---- event -------------------------------------------------------
-
     fn handle(&mut self, ev: Event) {
         let now = now_ms();
+        if !matches!(ev, Event::Timer(T_TRIM)) {
+            self.mem_dirty = true;
+        }
         match ev {
             Event::MouseMove(p) => self.on_mouse_move(p),
             Event::MouseLeave => self.on_mouse_leave(),
@@ -407,11 +406,10 @@ impl IslandApp {
             Event::DpiChanged(_) | Event::DisplayChanged => self.on_display(),
             Event::SettingsChanged => self.refresh_motion(),
             Event::PowerChanged => {
-                if self.cfg.power.enabled {
-                    if let Some(e) = self.battery.update(power::read()) {
+                if self.cfg.power.enabled
+                    && let Some(e) = self.battery.update(power::read()) {
                         self.power_alert(e);
                     }
-                }
             }
             Event::FullscreenHint(on) => {
                 self.fullscreen_hint = on;
@@ -467,7 +465,18 @@ impl IslandApp {
                 self.window.kill_timer(T_CONFIG);
                 self.reload_config();
             }
-            // Tick, tenggat, dan jam cukup memicu `update`.
+            T_RETRACT => {
+                self.window.kill_timer(T_RETRACT);
+                self.island.set_hover(false);
+            }
+            T_TRIM => {
+                self.window.kill_timer(T_TRIM);
+                if self.mem_dirty {
+                    self.mem_dirty = false;
+                    self.ui.gfx.trim();
+                    sys::trim_memory();
+                }
+            }
             _ => {}
         }
     }
@@ -501,30 +510,26 @@ impl IslandApp {
         if (scale - self.ui.scale).abs() > f32::EPSILON {
             self.ui.scale = scale;
             let _ = self.stage.SetScale(v3(scale, scale, 1.0));
+            self.apply_liquid();
             self.key = None;
         }
-        self.place_window(self.shape, self.window.is_visible());
+        self.layout_window();
     }
-
-    // ---- pointer -----------------------------------------------------
 
     fn window_width_dp(&self) -> f32 {
         self.window_px.0 as f32 / self.ui.scale
     }
 
-    /// Titik relatif pil utama, atau `None` bila di luar pil.
     fn pill_local(&self, p: Point) -> Option<Point> {
-        let r = self.shape.main_rect(self.window_width_dp(), self.top());
+        let r = self.shape.main_rect(self.window_width_dp());
         r.contains(p).then(|| Point::new(p.x - r.x, p.y - r.y))
     }
 
     fn on_mouse_move(&mut self, p: Point) {
+        self.window.kill_timer(T_RETRACT);
         if !self.island.is_hover() {
             self.island.set_hover(true);
             self.window.kill_timer(T_COLLAPSE);
-            if !self.island.is_expanded() && self.visible {
-                let _ = self.hover_scale(HOVER_SCALE);
-            }
         }
         if self.island.is_expanded() && !self.esc_registered {
             let esc = notchi_core::hotkey::Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: 0x1B };
@@ -540,24 +545,19 @@ impl IslandApp {
     }
 
     fn on_mouse_leave(&mut self) {
-        self.island.set_hover(false);
         self.pointer = Pointer::default();
-        let _ = self.hover_scale(1.0);
+        if self.island.autohide() && !self.island.is_expanded() {
+            self.window.set_timer(T_RETRACT, RETRACT_DELAY_MS);
+        } else {
+            self.island.set_hover(false);
+        }
         if self.esc_registered {
             self.window.unregister_hotkey(HK_ESC);
             self.esc_registered = false;
         }
         if self.island.is_expanded() {
-            self.window.set_timer(T_COLLAPSE, 2_500);
+            self.window.set_timer(T_COLLAPSE, COLLAPSE_DELAY_MS);
         }
-    }
-
-    fn hover_scale(&self, s: f32) -> Result<()> {
-        let v = &self.main.visual;
-        let size = self.shape.main;
-        v.SetCenterPoint(v3(size.w / 2.0, size.h / 2.0, 0.0))?;
-        self.ui.anim.spring(v, "Scale.X", s, SpringPreset::SNAPPY)?;
-        self.ui.anim.spring(v, "Scale.Y", s, SpringPreset::SNAPPY)
     }
 
     fn swipe(&mut self, step: i32) {
@@ -656,7 +656,6 @@ impl IslandApp {
         let result = self.volume.as_ref().map(|v| v.step(step));
         let result = match result {
             Some(Ok(r)) => Some(r),
-            // Perangkat keluaran mungkin berganti; buka ulang sekali.
             _ => {
                 self.volume = Volume::open().ok();
                 self.volume.as_ref().and_then(|v| v.step(step).ok())
@@ -667,8 +666,6 @@ impl IslandApp {
             self.island.push_alert(AlertKind::Volume { level, muted }, now);
         }
     }
-
-    // ---- menu --------------------------------------------------------
 
     fn show_menu(&mut self) {
         let lang = self.cfg.language;
@@ -701,6 +698,7 @@ impl IslandApp {
             MenuItem::Separator,
             MenuItem::Submenu { label: t(lang, Text::MenuMode).into(), items: modes },
             if snoozed { MenuItem::item(M_SHOW, t(lang, Text::MenuShowAgain)) } else { MenuItem::item(M_HIDE, t(lang, Text::MenuHideHour)) },
+            MenuItem::check(M_AUTOHIDE, t(lang, Text::MenuAutohide), self.cfg.island.autohide),
             MenuItem::check(M_LOGIN, t(lang, Text::MenuLaunchAtLogin), self.cfg.launch_at_login),
             MenuItem::Separator,
             MenuItem::item(M_SETTINGS, t(lang, Text::MenuSettings)),
@@ -727,6 +725,10 @@ impl IslandApp {
             }
             M_HIDE => self.island.snooze(now + HOUR_MS),
             M_SHOW => self.island.unsnooze(),
+            M_AUTOHIDE => {
+                let on = !self.cfg.island.autohide;
+                self.persist("island", "autohide", if on { "true" } else { "false" });
+            }
             M_LOGIN => {
                 let on = !self.cfg.launch_at_login;
                 self.persist("startup", "launch_at_login", if on { "true" } else { "false" });
@@ -750,8 +752,6 @@ impl IslandApp {
         quit();
     }
 
-    // ---- model → tampilan --------------------------------------------
-
     fn sync_activities(&mut self, now: Ms) {
         if let Some(t) = self.timer.filter(|t| t.is_finished(now)) {
             self.timer = None;
@@ -766,6 +766,11 @@ impl IslandApp {
         self.acts.set(ActivityKind::Timer, self.timer.is_some());
         self.acts.set(ActivityKind::Stopwatch, self.stopwatch.is_some());
         self.island.set_activity_count(self.acts.len());
+        let ordered = self.acts.ordered();
+        if ordered.iter().any(|k| !self.last_ordered.contains(k)) {
+            self.island.peek(now + PEEK_MS);
+        }
+        self.last_ordered = ordered;
     }
 
     fn update(&mut self) {
@@ -773,8 +778,6 @@ impl IslandApp {
         self.island.tick(now);
         self.sync_activities(now);
         if let Err(e) = self.render(now) {
-            // Kegagalan gambar tidak boleh menjatuhkan aplikasi; coba bangun
-            // ulang isi pada event berikutnya.
             log(&format!("render gagal: {e}"));
             self.key = None;
         }
@@ -813,7 +816,9 @@ impl IslandApp {
 
     fn render(&mut self, now: Ms) -> Result<()> {
         let pres = self.island.presentation(now);
-        let kind = self.view_kind(&pres);
+        let retracted = self.island.is_retracted(now);
+        let full_kind = self.view_kind(&pres);
+        let kind = if retracted { ViewKind::Empty } else { full_kind };
         let alert = match &pres {
             Presentation::Alert(a) => Some(a.clone()),
             _ => None,
@@ -828,11 +833,11 @@ impl IslandApp {
             reduce_motion: self.ui.anim.reduce_motion,
         });
 
-        let shape = Self::shape_for(kind, alert.as_ref());
+        let full = Self::shape_for(full_kind, alert.as_ref());
+        let shape = if retracted { full.retracted() } else { full };
         let visible = kind != ViewKind::Hidden;
         let key = ViewKey {
             kind,
-            // Level volume diperbarui tanpa membangun ulang HUD.
             alert: alert.clone().map(|a| match a {
                 AlertKind::Volume { muted, level } => AlertKind::Volume { muted, level: (level == 0) as u8 },
                 other => other,
@@ -853,14 +858,37 @@ impl IslandApp {
             presets: self.cfg.timer.presets_minutes.clone(),
         };
 
+        let revealing = self.retracted && !retracted;
+        let retracting = !self.retracted && retracted;
+        self.retracted = retracted;
+        self.full_shape = full;
         let morphing = shape != self.shape;
         if morphing {
-            self.morph(shape)?;
+            let preset = if retracting {
+                SpringPreset::SMOOTH
+            } else if revealing && self.cfg.liquid {
+                REVEAL
+            } else {
+                SpringPreset::BOUNCY
+            };
+            self.morph(shape, preset)?;
         }
         if visible != self.visible {
             self.set_visible(visible)?;
         } else if visible && !self.window.is_visible() {
-            self.place_window(self.shape, true);
+            self.window.show();
+        }
+        let hover = self.island.is_hover() && !self.island.autohide() && !self.island.is_expanded() && visible;
+        let rest = if hover { HOVER_SCALE } else { 1.0 };
+        if rest != self.scale_rest {
+            self.scale_rest = rest;
+            self.ui.anim.spring(&self.main.visual, "Scale.X", rest, SpringPreset::SNAPPY)?;
+            self.ui.anim.spring(&self.main.visual, "Scale.Y", rest, SpringPreset::SNAPPY)?;
+        }
+        let watch = self.island.is_expanded();
+        if watch != self.watching {
+            self.watching = watch;
+            self.window.watch_outside(watch);
         }
         if self.key.as_ref() != Some(&key) {
             self.rebuild(&key, alert.as_ref(), expression, now, morphing)?;
@@ -889,7 +917,7 @@ impl IslandApp {
     fn retire(&mut self, v: ContainerVisual, bubble: bool) -> Result<()> {
         self.retire_seq += 1;
         let batch = self.ui.anim.batch()?;
-        self.ui.anim.linear(&v, "Opacity", 0.0, 110.0, 0.0)?;
+        self.ui.anim.linear(&v, "Opacity", 0.0, RETIRE_FADE_MS, 0.0)?;
         batch.end(&self.proxy, TAG_RETIRE | self.retire_seq)?;
         self.retired.push((self.retire_seq, v, bubble));
         Ok(())
@@ -915,7 +943,7 @@ impl IslandApp {
                 let b = self.ui.container(&self.bubble.content)?;
                 b.SetOpacity(0.0)?;
                 views::build_bubble(&self.ui, &b, secondary, &m)?;
-                self.ui.anim.linear(&b, "Opacity", 1.0, 160.0, if morphing { 160.0 } else { 0.0 })?;
+                self.ui.anim.linear(&b, "Opacity", 1.0, CONTENT_FADE_MS, if morphing { CONTENT_DELAY_MS } else { 0.0 })?;
                 self.bubble_content = Some(b);
             }
             ViewKind::Card(Card::Media) => views::build_media_card(&self.ui, &root, &m, &mut d)?,
@@ -933,8 +961,7 @@ impl IslandApp {
                 }
             }
         }
-        // Konten baru muncul setelah bentuk hampir selesai (PRD §3.1).
-        self.ui.anim.linear(&root, "Opacity", 1.0, 180.0, if morphing { 170.0 } else { 0.0 })?;
+        self.ui.anim.linear(&root, "Opacity", 1.0, CONTENT_FADE_MS, if morphing { CONTENT_DELAY_MS } else { 0.0 })?;
         self.content = Some(Content { root, d, progress_sync: None });
         Ok(())
     }
@@ -968,7 +995,6 @@ impl IslandApp {
                     fill.SetSize(v2(width * frac, 4.0))?;
                     if snap.is_playing() {
                         let left = tl.end.saturating_sub(snap.position_at(now).unwrap_or(0)) as f32;
-                        // Animasi linear panjang di compositor, tanpa membangunkan UI.
                         self.ui.anim.linear_always(fill, "Size.X", *width, left.max(1.0))?;
                     }
                 }
@@ -984,25 +1010,21 @@ impl IslandApp {
         Ok(())
     }
 
-    // ---- bentuk dan jendela ------------------------------------------
-
-    fn morph(&mut self, shape: Shape) -> Result<()> {
+    fn morph(&mut self, shape: Shape, p: SpringPreset) -> Result<()> {
         self.morph_seq += 1;
-        let grow = layout::window_size(&[self.shape, shape], self.top());
-        self.place_window_size(grow, self.window.is_visible() || self.visible);
-        let p = SpringPreset::BOUNCY;
+        self.settled_region = self.region_of(shape);
+        self.set_region(layout::union(self.region, self.settled_region));
         let a = &self.ui.anim;
         let batch = a.batch()?;
         let main = &self.main.visual;
         a.spring(main, "Size.X", shape.main.w, p)?;
         a.spring(main, "Size.Y", shape.main.h, p)?;
-        main.SetCenterPoint(v3(shape.main.w / 2.0, shape.main.h / 2.0, 0.0))?;
         let main_x = if shape.bubble { -(BUBBLE_GAP + BUBBLE.w) / 2.0 } else { 0.0 };
         a.spring(main, "Offset.X", main_x, p)?;
         let bubble_x = shape.total_width() / 2.0 - BUBBLE.w / 2.0;
         let bubble = &self.bubble.visual;
         a.spring(bubble, "Offset.X", if shape.bubble { bubble_x } else { main_x }, p)?;
-        a.linear(bubble, "Opacity", if shape.bubble && self.visible { 1.0 } else { 0.0 }, 160.0, 0.0)?;
+        a.linear(bubble, "Opacity", if shape.bubble && self.visible { 1.0 } else { 0.0 }, CONTENT_FADE_MS, 0.0)?;
         batch.end(&self.proxy, TAG_MORPH | self.morph_seq)?;
         self.shape = shape;
         Ok(())
@@ -1011,17 +1033,16 @@ impl IslandApp {
     fn set_visible(&mut self, visible: bool) -> Result<()> {
         self.visible = visible;
         if visible {
-            self.place_window(self.shape, true);
+            self.settled_region = self.region_of(self.shape);
+            self.set_region(self.settled_region);
+            self.window.show();
         }
         let a = &self.ui.anim;
         let batch = a.batch()?;
         let target = if visible { 1.0 } else { 0.0 };
-        a.linear(&self.main.visual, "Opacity", target, if visible { 120.0 } else { 180.0 }, 0.0)?;
+        a.linear(&self.main.visual, "Opacity", target, if visible { 90.0 } else { 140.0 }, 0.0)?;
         let bubble_target = if visible && self.shape.bubble { 1.0 } else { 0.0 };
-        a.linear(&self.bubble.visual, "Opacity", bubble_target, 160.0, 0.0)?;
-        if !visible {
-            let _ = self.hover_scale(1.0);
-        }
+        a.linear(&self.bubble.visual, "Opacity", bubble_target, CONTENT_FADE_MS, 0.0)?;
         self.morph_seq += 1;
         batch.end(&self.proxy, TAG_MORPH | self.morph_seq)?;
         Ok(())
@@ -1031,16 +1052,19 @@ impl IslandApp {
         let seq = tag & TAG_MASK;
         match tag & !TAG_MASK {
             TAG_MORPH if seq == self.morph_seq => {
-                // Animasi selesai: kecilkan jendela agar tidak menghalangi klik.
-                let hover_mode = self.cfg.island.mode == DisplayMode::Hover && !self.island.is_fullscreen() && !self.island.is_snoozed(now_ms());
+                let now = now_ms();
+                let hover_mode =
+                    self.cfg.island.mode == DisplayMode::Hover && !self.island.is_fullscreen() && !self.island.is_snoozed(now);
                 if self.visible {
-                    self.place_window(self.shape, true);
+                    self.set_region(self.settled_region);
                 } else if hover_mode {
-                    // Zona hover tipis di tepi atas layar.
-                    let zone = Size::new(layout::IDLE.w, self.top() + 10.0);
-                    self.place_window_size(zone, true);
+                    self.set_region(layout::near_zone(&Shape::single(layout::IDLE)));
+                    self.window.show();
                 } else {
                     self.window.hide();
+                }
+                if !self.island.is_expanded() {
+                    self.window.set_timer(T_TRIM, TRIM_DELAY_MS);
                 }
             }
             TAG_RETIRE => {
@@ -1057,24 +1081,49 @@ impl IslandApp {
         }
     }
 
-    fn place_window(&mut self, shape: Shape, show: bool) {
-        let size = layout::window_size(&[shape], self.top());
-        self.place_window_size(size, show);
+    fn apply_liquid(&mut self) {
+        let on = self.cfg.liquid;
+        let _ = self.main.set_liquid(&self.ui, on);
+        let _ = self.bubble.set_liquid(&self.ui, on);
     }
 
-    fn place_window_size(&mut self, size: Size, show: bool) {
+    fn region_of(&self, shape: Shape) -> Size {
+        let near = layout::near_zone(&self.full_shape);
+        if self.retracted {
+            near
+        } else if self.island.autohide() {
+            layout::union(layout::hit_box(&[shape]), near)
+        } else {
+            layout::hit_box(&[shape])
+        }
+    }
+
+    fn set_region(&mut self, size: Size) {
+        if size != self.region {
+            self.region = size;
+            self.apply_region();
+        }
+    }
+
+    fn apply_region(&self) {
+        let s = self.ui.scale;
+        let w = ((self.region.w * s).ceil() as i32).min(self.window_px.0);
+        let h = ((self.region.h * s).ceil() as i32).min(self.window_px.1);
+        self.window.set_region((self.window_px.0 - w) / 2, 0, w, h);
+    }
+
+    fn layout_window(&mut self) {
         let mon = primary_monitor();
+        let size = layout::window_max();
         let w = (size.w * self.ui.scale).ceil() as i32;
         let h = (size.h * self.ui.scale).ceil() as i32;
-        // Lebar genap menjaga pusat pil tetap di piksel yang sama saat berubah ukuran.
         let w = w + (mon.width() - w).rem_euclid(2);
         let x = mon.left + (mon.width() - w) / 2;
         self.window_px = (w, h);
-        self.window.set_bounds(x, mon.top, w, h, show);
+        self.window.set_bounds(x, mon.top, w, h, false);
+        self.apply_region();
     }
 
-    /// Menyetel timer Win32 hanya untuk hal yang benar-benar perlu, agar
-    /// tidak ada wakeup saat idle (PRD §8.1).
     fn schedule(&mut self, now: Ms) {
         let showing = self.key.as_ref().map(|k| k.kind);
         let mut tick: Option<Ms> = None;
@@ -1091,11 +1140,10 @@ impl IslandApp {
         if shows_sw {
             want(self.stopwatch.and_then(|s| s.next_tick(now)));
         }
-        if showing == Some(ViewKind::Card(Card::Media)) {
-            if let Some(pos) = self.snap.as_ref().filter(|s| s.is_playing()).and_then(|s| s.position_at(now)) {
+        if showing == Some(ViewKind::Card(Card::Media))
+            && let Some(pos) = self.snap.as_ref().filter(|s| s.is_playing()).and_then(|s| s.position_at(now)) {
                 want(Some(now + 1000 - pos % 1000));
             }
-        }
         match tick {
             Some(t) => self.window.set_timer(T_TICK, t.saturating_sub(now).max(16) as u32),
             None => self.window.kill_timer(T_TICK),
@@ -1124,12 +1172,10 @@ impl IslandApp {
     }
 }
 
-/// Jalur `config.toml` untuk ditampilkan oleh CLI.
 pub fn config_path() -> PathBuf {
     Paths::default_location().config
 }
 
-/// Menulis ulang `config.toml` ke isi default.
 pub fn reset_config(path: &Path) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -1137,9 +1183,6 @@ pub fn reset_config(path: &Path) -> std::io::Result<()> {
     std::fs::write(path, config::DEFAULT_TOML)
 }
 
-/// Log diagnostik ke `%LOCALAPPDATA%\Notchi\notchi.log`. Hanya pesan
-/// kesalahan teknis; tidak pernah judul lagu, jendela, atau data pribadi
-/// (PRD §7.1).
 pub fn log(msg: &str) {
     use std::io::Write;
     if cfg!(debug_assertions) {
@@ -1149,7 +1192,6 @@ pub fn log(msg: &str) {
     let dir = PathBuf::from(base).join("Notchi");
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("notchi.log");
-    // Batasi ukuran log agar tidak tumbuh tanpa batas.
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > 256 * 1024) {
         let _ = std::fs::remove_file(&path);
     }
