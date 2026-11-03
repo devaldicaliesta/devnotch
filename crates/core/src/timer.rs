@@ -68,6 +68,19 @@ impl Countdown {
         };
     }
 
+    pub fn subtract(&mut self, less: Ms, now: Ms) -> bool {
+        let remaining = self.remaining(now);
+        if remaining <= less {
+            return false;
+        }
+        let remaining = remaining - less;
+        self.state = match self.state {
+            CountdownState::Running { .. } => CountdownState::Running { end: now + remaining },
+            CountdownState::Paused { .. } => CountdownState::Paused { remaining },
+        };
+        true
+    }
+
     pub fn next_tick(&self, now: Ms) -> Option<Ms> {
         match self.state {
             CountdownState::Running { end } if end > now => {
@@ -154,6 +167,23 @@ mod tests {
         assert_eq!(t.remaining(10_000), 80_000);
         assert!(t.total() >= 80_000);
         assert!(t.progress(10_000) >= 0.0);
+    }
+
+    #[test]
+    fn kurangi_lewat_scroll_tidak_menamatkan_timer() {
+        let mut t = Countdown::start(150_000, 0);
+        assert!(t.subtract(60_000, 10_000));
+        assert_eq!(t.remaining(10_000), 80_000);
+        assert!(t.is_running());
+        assert!(!t.subtract(60_000, 30_000), "sisa 60 detik: tidak dikurangi sampai habis");
+        assert_eq!(t.remaining(30_000), 60_000);
+        t.pause(40_000);
+        assert!(!t.subtract(60_000, 40_000));
+        let mut p = Countdown::start(300_000, 0);
+        p.pause(0);
+        assert!(p.subtract(60_000, 99_000));
+        assert_eq!(p.remaining(200_000), 240_000, "timer dijeda tetap dijeda");
+        assert!(!p.is_running());
     }
 
     #[test]

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Pasang toolchain dari rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - name: Clippy
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+
+      - name: Uji
+        run: cargo test --workspace --locked
+
+      - name: Build release
+        run: cargo build --release --locked -p notchi
+
+      - name: Uji asap dengan input tetikus
+        run: ./.github/smoke/smoke.ps1 -Exe target/release/Notchi.exe -Out smoke
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-screenshots
+          path: smoke/
+          if-no-files-found: ignore

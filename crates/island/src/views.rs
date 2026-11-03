@@ -2,16 +2,17 @@ use notchi_core::Ms;
 use notchi_core::color::{self, Color, Skin, TEXT_PRIMARY};
 use notchi_core::fmt::{countdown, elapsed};
 use notchi_core::geom::{Rect, Size};
-use notchi_core::i18n::{Lang, Text, long_date, t};
+use notchi_core::i18n::{Lang, Text, long_date, short_date, t};
 use notchi_core::island::AlertKind;
-use notchi_core::layout::{self, Button};
+use notchi_core::layout::{self, BATTERY_BADGE, Button};
 use notchi_core::lyrics::Lyrics;
 use notchi_core::mascot::Expression;
 use notchi_core::media::{Artwork, MediaSnapshot};
+use notchi_core::power::PowerReading;
 use notchi_core::spring::SpringPreset;
 use notchi_core::timer::{Countdown, Stopwatch};
 use notchi_platform_win::Result;
-use notchi_platform_win::comp::{ContainerVisual, SpriteVisual, v2, v3};
+use notchi_platform_win::comp::{CompositionObject, ContainerVisual, Interface, ShapeVisual, SpriteVisual, v2, v3};
 use notchi_platform_win::gfx::{TextStyle, Weight};
 use notchi_platform_win::shell::LocalTime;
 
@@ -29,6 +30,11 @@ pub const G_MUSIC: &str = "\u{E8D6}";
 pub const G_VOLUME: &str = "\u{E767}";
 pub const G_MUTE: &str = "\u{E74F}";
 pub const G_LYRICS: &str = "\u{E720}";
+pub const G_CLOCK: &str = "\u{E823}";
+pub const G_CHEVRON: &str = "\u{E70D}";
+
+const LOW_BATTERY: u8 = 20;
+const KNOB: f32 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
@@ -59,6 +65,26 @@ pub struct Model<'a> {
     pub presets: &'a [u32],
     pub clock: LocalTime,
     pub lyrics: Option<LyricState<'a>>,
+    pub battery: Option<PowerReading>,
+}
+
+#[derive(Debug)]
+pub struct SeekBar {
+    pub rect: Rect,
+    knob: ShapeVisual,
+    shown: bool,
+}
+
+impl SeekBar {
+    pub fn show(&mut self, ui: &Ui, on: bool) -> Result<()> {
+        if on == self.shown {
+            return Ok(());
+        }
+        self.shown = on;
+        ui.anim.linear(&self.knob, "Opacity", if on { 1.0 } else { 0.0 }, 120.0, 0.0)?;
+        ui.anim.spring(&self.knob, "Scale.X", if on { 1.0 } else { 0.4 }, SpringPreset::SNAPPY)?;
+        ui.anim.spring(&self.knob, "Scale.Y", if on { 1.0 } else { 0.4 }, SpringPreset::SNAPPY)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -68,6 +94,7 @@ pub struct Dyn {
     pub elapsed: Option<DynText>,
     pub remaining: Option<DynText>,
     pub progress: Option<(SpriteVisual, f32)>,
+    pub seek: Option<SeekBar>,
     pub clock: Option<DynText>,
     pub hud_bar: Option<(SpriteVisual, f32)>,
     pub hud_text: Option<DynText>,
@@ -264,6 +291,17 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
         geom.SetSize(v2(lay.progress.w, lay.progress.h))?;
         geom.SetCornerRadius(v2(2.0, 2.0))?;
         fill.SetClip(&ui.c.CreateGeometricClipWithGeometry(&geom)?)?;
+        if s.controls.seek {
+            let (knob, _) = ui.dot(KNOB, TEXT_PRIMARY)?;
+            knob.SetOpacity(0.0)?;
+            knob.SetScale(v3(0.4, 0.4, 1.0))?;
+            parent.Children()?.InsertAtTop(&knob)?;
+            let source: CompositionObject = fill.cast()?;
+            let x0 = lay.progress.x - KNOB / 2.0;
+            let y0 = lay.progress.y + lay.progress.h / 2.0 - KNOB / 2.0;
+            ui.anim.bind(&knob, "Offset", &format!("Vector3(fill.Size.X + {x0}, {y0}, 0)"), &[("fill", &source)])?;
+            d.seek = Some(SeekBar { rect: lay.progress, knob, shown: false });
+        }
         d.progress = Some((fill, lay.progress.w));
         let small = TextStyle::new(11.0, Weight::Medium, white(0.6)).tabular();
         let (el, rem) = media_times(s, m.now);
@@ -281,8 +319,8 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
                 let tone = if m.lyrics.is_some() { Tone::Tinted(ui.accent) } else { Tone::Neutral };
                 (G_LYRICS, true, tone)
             }
-            _ if playing => (G_PAUSE, c.pause, Tone::Tinted(ui.accent)),
-            _ => (G_PLAY, c.play, Tone::Tinted(ui.accent)),
+            _ if playing => (G_PAUSE, c.can_play_pause(true), Tone::Tinted(ui.accent)),
+            _ => (G_PLAY, c.can_play_pause(false), Tone::Tinted(ui.accent)),
         };
         let tone = if enabled { tone } else { Tone::Disabled };
         let tone = if ui.pal.is_flat() && matches!(tone, Tone::Tinted(_)) && *b != Button::Lyrics { Tone::Neutral } else { tone };
@@ -294,9 +332,13 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
     Ok(())
 }
 
+pub fn times_at(pos: Ms, end: Ms) -> (String, String) {
+    (elapsed(pos), format!("-{}", elapsed(end.saturating_sub(pos))))
+}
+
 pub fn media_times(s: &MediaSnapshot, now: Ms) -> (String, String) {
     match (s.position_at(now), s.timeline) {
-        (Some(pos), Some(tl)) => (elapsed(pos), format!("-{}", elapsed(tl.end.saturating_sub(pos)))),
+        (Some(pos), Some(tl)) => times_at(pos, tl.end),
         _ => (String::new(), String::new()),
     }
 }
@@ -415,6 +457,9 @@ pub fn build_home_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mut
     d.clock = Some(ui.text(parent, &clock_text(m.clock), big, lay.clock, Align::Left)?);
     let date = long_date(m.lang, m.clock.weekday, m.clock.day, m.clock.month);
     ui.text(parent, &date, TextStyle::new(13.0, Weight::Regular, ui.pal.text_dim), lay.date, Align::Left)?;
+    if let Some(r) = m.battery {
+        battery_badge(ui, parent, lay.battery, r)?;
+    }
     for (b, r) in &lay.buttons {
         let (label, icon) = match b {
             Button::Preset(i) => (format!("{} {}", presets[*i as usize], t(m.lang, Text::Minutes)), false),
@@ -422,6 +467,102 @@ pub fn build_home_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mut
         };
         let host = ui.button(parent, *r, &label, icon, Tone::Neutral)?;
         d.add(*b, *r, host);
+    }
+    Ok(())
+}
+
+pub fn battery_level(r: PowerReading) -> Option<(u8, bool)> {
+    if !r.has_battery {
+        return None;
+    }
+    r.percent.map(|p| (p.min(100), r.ac_online))
+}
+
+fn battery_badge(ui: &Ui, parent: &ContainerVisual, rect: Rect, r: PowerReading) -> Result<bool> {
+    let Some((pct, charging)) = battery_level(r) else { return Ok(false) };
+    let body = Size::new(21.0, 11.0);
+    let bx = rect.x + rect.w - body.w - 3.0;
+    let by = (rect.y + (rect.h - body.h) / 2.0).round();
+    let outline = white(0.55);
+    ui.rounded(parent, Rect::new(bx, by, body.w, body.h), 3.0, outline)?;
+    ui.rounded(parent, Rect::new(bx + 1.5, by + 1.5, body.w - 3.0, body.h - 3.0), 2.0, ui.pal.base)?;
+    ui.rounded(parent, Rect::new(bx + body.w + 1.0, by + 3.5, 2.0, body.h - 7.0), 1.0, outline)?;
+    let level = if charging {
+        color::accent_charging()
+    } else if pct <= LOW_BATTERY {
+        color::STATUS_CRITICAL
+    } else {
+        white(0.9)
+    };
+    let inner = Size::new(body.w - 5.0, body.h - 5.0);
+    let w = (inner.w * pct as f32 / 100.0).max(1.5);
+    ui.rounded(parent, Rect::new(bx + 2.5, by + 2.5, w, inner.h), 1.0, level)?;
+    if charging {
+        let size = Size::new(6.0, 9.0);
+        ui.bolt(parent, Rect::new(bx + (body.w - size.w) / 2.0, by + (body.h - size.h) / 2.0, size.w, size.h), TEXT_PRIMARY)?;
+    }
+    let text = Rect::new(rect.x, rect.y, bx - rect.x - 5.0, rect.h);
+    let tint = if pct <= LOW_BATTERY && !charging { color::STATUS_CRITICAL } else { white(0.85) };
+    ui.text(parent, &format!("{pct}%"), TextStyle::new(12.0, Weight::Semibold, tint).tabular(), text, Align::Right)?;
+    Ok(true)
+}
+
+pub fn build_peek_idle(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
+    let lay = layout::peek_pill(size);
+    if m.mascot_on {
+        d.mascot(mascot(ui, parent, lay.icon, m.skin, m.expression)?, true);
+    } else {
+        let style = TextStyle::new(lay.icon.h * 0.62, Weight::Regular, m.skin.color()).icon().centered();
+        ui.text(parent, G_CLOCK, style, lay.icon, Align::Center)?;
+    }
+    let badge = Rect::new(size.w - 14.0 - BATTERY_BADGE.w, (size.h - BATTERY_BADGE.h) / 2.0, BATTERY_BADGE.w, BATTERY_BADGE.h);
+    let shown = match m.battery {
+        Some(r) => battery_badge(ui, parent, badge, r)?,
+        None => false,
+    };
+    let end = if shown {
+        badge.x + 4.0
+    } else {
+        let style = TextStyle::new(12.0, Weight::Regular, white(0.45)).icon().centered();
+        ui.text(parent, G_CHEVRON, style, lay.trailing, Align::Center)?;
+        lay.trailing.x
+    };
+    let x = lay.title.x;
+    let clock = TextStyle::new(15.0, Weight::Semibold, TEXT_PRIMARY).tabular();
+    let cw = ui.gfx.measure("00:00", &clock)?.w.ceil() + 2.0;
+    d.clock = Some(ui.text(parent, &clock_text(m.clock), clock, Rect::new(x, 0.0, cw, size.h), Align::Left)?);
+    let dx = x + cw + 8.0;
+    let date = short_date(m.lang, m.clock.weekday, m.clock.day, m.clock.month);
+    let style = TextStyle::new(12.0, Weight::Medium, ui.pal.text_dim);
+    ui.text(parent, &date, style, Rect::new(dx, 1.0, (end - 8.0 - dx).max(1.0), size.h), Align::Left)?;
+    Ok(())
+}
+
+pub fn build_peek_media(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
+    let lay = layout::peek_pill(size);
+    left_icon(ui, parent, lay.icon, Slot::Media, m, d)?;
+    let Some(s) = m.media else { return Ok(()) };
+    let title = if s.title.trim().is_empty() { t(m.lang, Text::NothingPlaying) } else { s.title.as_str() };
+    let sub = if s.artist.is_empty() { s.album.as_str() } else { s.artist.as_str() };
+    let style = TextStyle::new(13.0, Weight::Semibold, TEXT_PRIMARY);
+    if sub.is_empty() {
+        ui.text(parent, title, style, Rect::new(lay.title.x, 0.0, lay.title.w, size.h), Align::Left)?;
+    } else {
+        ui.text(parent, title, style, lay.title, Align::Left)?;
+        ui.text(parent, sub, TextStyle::new(11.0, Weight::Regular, ui.pal.text_dim), lay.subtitle, Align::Left)?;
+    }
+    let playing = s.is_playing();
+    let enabled = s.controls.can_play_pause(playing);
+    let tone = if !enabled {
+        Tone::Disabled
+    } else if ui.pal.is_flat() {
+        Tone::Neutral
+    } else {
+        Tone::Tinted(ui.accent)
+    };
+    let host = ui.button(parent, lay.trailing, if playing { G_PAUSE } else { G_PLAY }, true, tone)?;
+    if enabled {
+        d.add(Button::PlayPause, lay.trailing, host);
     }
     Ok(())
 }

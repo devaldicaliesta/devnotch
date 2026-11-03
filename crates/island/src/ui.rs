@@ -111,6 +111,26 @@ impl Ui {
         Ok(v)
     }
 
+    pub fn dot(&self, d: f32, fill: Color) -> Result<(ShapeVisual, CompositionSpriteShape)> {
+        let v = self.c.CreateShapeVisual()?;
+        v.SetSize(v2(d, d))?;
+        v.SetCenterPoint(v3(d / 2.0, d / 2.0, 0.0))?;
+        let geom = self.c.CreateEllipseGeometry()?;
+        geom.SetCenter(v2(d / 2.0, d / 2.0))?;
+        geom.SetRadius(v2(d / 2.0, d / 2.0))?;
+        let shape = self.c.CreateSpriteShapeWithGeometry(&geom)?;
+        shape.SetFillBrush(&self.c.CreateColorBrushWithColor(color(fill))?)?;
+        v.Shapes()?.Append(&shape)?;
+        Ok((v, shape))
+    }
+
+    pub fn bolt(&self, parent: &ContainerVisual, rect: Rect, fill: Color) -> Result<SpriteVisual> {
+        let s = self.gfx.bolt(rect.size(), fill, self.scale)?;
+        let v = self.surface_sprite(parent, &s, Point::new(rect.x, rect.y))?;
+        v.SetSize(v2(rect.w, rect.h))?;
+        Ok(v)
+    }
+
     pub fn bar(&self, parent: &ContainerVisual, rect: Rect, fill: Color) -> Result<SpriteVisual> {
         let v = self.c.CreateSpriteVisual()?;
         v.SetBrush(&self.c.CreateColorBrushWithColor(color(fill))?)?;

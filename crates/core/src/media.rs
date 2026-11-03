@@ -15,8 +15,16 @@ pub enum PlaybackStatus {
 pub struct Controls {
     pub play: bool,
     pub pause: bool,
+    pub toggle: bool,
     pub next: bool,
     pub prev: bool,
+    pub seek: bool,
+}
+
+impl Controls {
+    pub fn can_play_pause(&self, playing: bool) -> bool {
+        self.toggle || if playing { self.pause } else { self.play }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +195,82 @@ impl MediaPresence {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawTimeline {
+    pub position: Ms,
+    pub end: Ms,
+    pub updated: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TimelineAnchor {
+    last: Option<(u64, RawTimeline, bool, Timeline)>,
+}
+
+impl TimelineAnchor {
+    pub fn stabilize(&mut self, track_id: u64, raw: Option<RawTimeline>, fresh: Option<Timeline>, playing: bool, now: Ms) -> Option<Timeline> {
+        let (Some(raw), Some(fresh)) = (raw, fresh) else {
+            self.last = None;
+            return fresh;
+        };
+        let timeline = match self.last {
+            Some((id, prev_raw, was_playing, prev)) if id == track_id && prev_raw == raw => {
+                if was_playing == playing {
+                    prev
+                } else {
+                    let position = if was_playing {
+                        (prev.position + now.saturating_sub(prev.reported_at)).min(prev.end)
+                    } else {
+                        prev.position
+                    };
+                    Timeline { position, end: prev.end, reported_at: now }
+                }
+            }
+            _ => fresh,
+        };
+        self.last = Some((track_id, raw, playing, timeline));
+        Some(timeline)
+    }
+
+    pub fn moved(&mut self, track_id: u64, position: Ms, now: Ms) {
+        if let Some((id, _, _, tl)) = self.last.as_mut()
+            && *id == track_id
+        {
+            *tl = Timeline { position: position.min(tl.end), end: tl.end, reported_at: now };
+        }
+    }
+}
+
+pub fn seek_target(snap: &MediaSnapshot, fraction: f32) -> Option<Ms> {
+    let end = snap.timeline?.end;
+    (end > 0 && snap.controls.seek).then(|| (end as f64 * fraction.clamp(0.0, 1.0) as f64).round() as Ms)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ContentHold {
+    until: Option<Ms>,
+}
+
+impl ContentHold {
+    pub fn hold(&mut self, had_content: bool, has_content: bool, now: Ms, window: Ms) -> Option<Ms> {
+        if has_content || !had_content {
+            self.until = None;
+            return None;
+        }
+        let until = *self.until.get_or_insert(now + window);
+        if now < until {
+            Some(until)
+        } else {
+            self.until = None;
+            None
+        }
+    }
+}
+
+pub fn art_fingerprint(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3)) ^ bytes.len() as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +343,90 @@ mod tests {
         assert!(!p.is_present(Some(&paused), 70_000), "jeda tidak boleh diperpanjang");
         p.update(None, 80_000);
         assert!(!p.is_present(None, 80_000));
+    }
+
+    #[test]
+    fn tombol_putar_mengikuti_kemampuan_sesi() {
+        let only_toggle = Controls { toggle: true, ..Default::default() };
+        assert!(only_toggle.can_play_pause(true) && only_toggle.can_play_pause(false));
+        let play_only = Controls { play: true, ..Default::default() };
+        assert!(play_only.can_play_pause(false));
+        assert!(!play_only.can_play_pause(true));
+        assert!(!Controls::default().can_play_pause(false));
+    }
+
+    #[test]
+    fn posisi_tidak_melompat_saat_timeline_basi() {
+        let raw = RawTimeline { position: 10_000, end: 200_000, updated: 7 };
+        let fresh = |reported_at| Some(Timeline { position: 10_000, end: 200_000, reported_at });
+        let mut a = TimelineAnchor::default();
+        let tl = a.stabilize(1, Some(raw), fresh(1_000), true, 1_000).unwrap();
+        assert_eq!(tl.reported_at, 1_000);
+
+        let paused = a.stabilize(1, Some(raw), fresh(1_000), false, 31_000).unwrap();
+        assert_eq!(paused.position, 40_000, "jeda membekukan posisi terakhir, bukan posisi laporan lama");
+
+        let resumed = a.stabilize(1, Some(raw), fresh(1_000), true, 91_000).unwrap();
+        assert_eq!(resumed.position, 40_000, "lanjut dari posisi jeda");
+        let s = MediaSnapshot { status: PlaybackStatus::Playing, timeline: Some(resumed), ..Default::default() };
+        assert_eq!(s.position_at(92_000), Some(41_000), "lama jeda tidak ikut dihitung");
+
+        let still = a.stabilize(1, Some(raw), fresh(1_500), true, 95_000).unwrap();
+        assert_eq!(still, resumed, "laporan yang sama tidak menggeser jangkar");
+    }
+
+    #[test]
+    fn laporan_baru_dan_lagu_baru_memakai_timeline_segar() {
+        let raw = RawTimeline { position: 10_000, end: 200_000, updated: 7 };
+        let mut a = TimelineAnchor::default();
+        a.stabilize(1, Some(raw), Some(Timeline { position: 10_000, end: 200_000, reported_at: 1_000 }), true, 1_000);
+        let updated = RawTimeline { position: 50_000, updated: 9, ..raw };
+        let fresh = Timeline { position: 50_000, end: 200_000, reported_at: 40_000 };
+        assert_eq!(a.stabilize(1, Some(updated), Some(fresh), false, 41_000), Some(fresh));
+        let next = Timeline { position: 0, end: 180_000, reported_at: 42_000 };
+        assert_eq!(a.stabilize(2, Some(updated), Some(next), false, 42_000), Some(next));
+        assert_eq!(a.stabilize(2, None, None, true, 43_000), None);
+    }
+
+    #[test]
+    fn seek_menggeser_jangkar_dan_dibatasi_durasi() {
+        let raw = RawTimeline { position: 10_000, end: 200_000, updated: 7 };
+        let mut a = TimelineAnchor::default();
+        a.stabilize(3, Some(raw), Some(Timeline { position: 10_000, end: 200_000, reported_at: 0 }), true, 0);
+        a.moved(3, 120_000, 5_000);
+        let tl = a.stabilize(3, Some(raw), Some(Timeline { position: 10_000, end: 200_000, reported_at: 0 }), true, 6_000).unwrap();
+        assert_eq!(tl, Timeline { position: 120_000, end: 200_000, reported_at: 5_000 }, "laporan basi tidak menarik balik posisi");
+        a.moved(9, 1, 7_000);
+        a.moved(3, 999_999, 7_000);
+        let tl = a.stabilize(3, Some(raw), Some(tl), true, 7_000).unwrap();
+        assert_eq!(tl.position, 200_000, "seek ke lagu lain diabaikan, posisi dibatasi durasi");
+
+        let mut s = snap(PlaybackStatus::Playing);
+        assert_eq!(seek_target(&s, 0.5), None, "sesi tanpa dukungan seek");
+        s.controls.seek = true;
+        assert_eq!(seek_target(&s, 0.5), Some(100_000));
+        assert_eq!(seek_target(&s, 7.0), Some(200_000));
+        assert_eq!(seek_target(&s, -1.0), Some(0));
+        s.timeline = None;
+        assert_eq!(seek_target(&s, 0.5), None);
+    }
+
+    #[test]
+    fn jeda_singkat_antar_lagu_ditahan() {
+        let mut h = ContentHold::default();
+        assert_eq!(h.hold(true, false, 1_000, 1_500), Some(2_500));
+        assert_eq!(h.hold(true, false, 2_000, 1_500), Some(2_500), "batas waktu tidak diperpanjang");
+        assert_eq!(h.hold(true, false, 2_500, 1_500), None, "lewat batas: kosong diteruskan");
+        assert_eq!(h.hold(true, false, 3_000, 1_500), Some(4_500));
+        assert_eq!(h.hold(true, true, 3_100, 1_500), None, "isi kembali: tahanan dilepas");
+        assert_eq!(h.hold(false, false, 3_200, 1_500), None, "tidak ada yang perlu ditahan");
+    }
+
+    #[test]
+    fn sidik_sampul_membedakan_isi() {
+        assert_eq!(art_fingerprint(b"abc"), art_fingerprint(b"abc"));
+        assert_ne!(art_fingerprint(b"abc"), art_fingerprint(b"abd"));
+        assert_ne!(art_fingerprint(&[]), art_fingerprint(&[0]));
     }
 
     #[test]

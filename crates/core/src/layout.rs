@@ -11,6 +11,10 @@ pub const EXPANDED_W: f32 = 371.0;
 pub const EXPANDED_MIN_H: f32 = 84.0;
 pub const EXPANDED_MAX_H: f32 = 240.0;
 pub const HUD: Size = Size::new(200.0, 37.0);
+pub const PEEK_IDLE: Size = Size::new(252.0, 37.0);
+pub const PEEK_MEDIA: Size = Size::new(300.0, 37.0);
+pub const SEEK_PAD_Y: f32 = 8.0;
+pub const SEEK_PAD_X: f32 = 6.0;
 pub const HOVER_SCALE: f32 = 1.05;
 pub const MAX_RADIUS: f32 = 40.0;
 pub const WINDOW_PAD: f32 = 12.0;
@@ -89,11 +93,18 @@ pub const FILLET: f32 = 10.0;
 pub const LIP: f32 = 4.0;
 const LIP_RATIO: f32 = 0.5;
 const LIP_MIN_W: f32 = 56.0;
-pub const NEAR_X: f32 = 40.0;
-pub const NEAR_Y: f32 = 10.0;
+pub const NEAR_X: f32 = 8.0;
+pub const NEAR_Y: f32 = 4.0;
 
 pub fn near_zone(shape: &Shape) -> Size {
     Size::new((shape.total_width() + 2.0 * NEAR_X).ceil(), NEAR_Y)
+}
+
+pub fn rest_box(shape: &Shape) -> Size {
+    Size::new(
+        (shape.total_width() * HOVER_SCALE + 2.0 * FILLET).ceil(),
+        (shape.main.h * HOVER_SCALE).ceil(),
+    )
 }
 
 pub fn hit_box(shapes: &[Shape]) -> Size {
@@ -220,8 +231,11 @@ pub struct HomeCard {
     pub mascot: Rect,
     pub clock: Rect,
     pub date: Rect,
+    pub battery: Rect,
     pub buttons: Vec<(Button, Rect)>,
 }
+
+pub const BATTERY_BADGE: Size = Size::new(62.0, 22.0);
 
 pub fn home_card(presets: usize) -> HomeCard {
     let w = EXPANDED_W;
@@ -238,10 +252,12 @@ pub fn home_card(presets: usize) -> HomeCard {
         Button::StartStopwatch,
         Rect::new(PAD + (n - 1) as f32 * (bw + gap), by, bw, 30.0),
     ));
+    let battery = Rect::new(w - PAD - BATTERY_BADGE.w, PAD + 4.0, BATTERY_BADGE.w, BATTERY_BADGE.h);
     HomeCard {
         mascot,
-        clock: Rect::new(tx, PAD - 2.0, w - tx - PAD, 34.0),
+        clock: Rect::new(tx, PAD - 2.0, battery.x - tx - 8.0, 34.0),
         date: Rect::new(tx, PAD + 34.0, w - tx - PAD, 18.0),
+        battery,
         buttons,
     }
 }
@@ -274,6 +290,34 @@ pub fn compact_slots(size: Size) -> (Rect, Rect) {
 
 pub fn hit(buttons: &[(Button, Rect)], p: Point) -> Option<Button> {
     buttons.iter().find(|(_, r)| r.inflate(4.0).contains(p)).map(|(b, _)| *b)
+}
+
+pub fn seek_zone(progress: Rect) -> Rect {
+    Rect::new(progress.x - SEEK_PAD_X, progress.y - SEEK_PAD_Y, progress.w + 2.0 * SEEK_PAD_X, progress.h + 2.0 * SEEK_PAD_Y)
+}
+
+pub fn seek_fraction(progress: Rect, x: f32) -> f32 {
+    ((x - progress.x) / progress.w.max(1.0)).clamp(0.0, 1.0)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PeekPill {
+    pub icon: Rect,
+    pub title: Rect,
+    pub subtitle: Rect,
+    pub trailing: Rect,
+}
+
+pub fn peek_pill(size: Size) -> PeekPill {
+    let (icon, trailing) = compact_slots(size);
+    let tx = icon.x + icon.w + 10.0;
+    let tw = trailing.x - 10.0 - tx;
+    PeekPill {
+        icon,
+        title: Rect::new(tx, 3.0, tw, 18.0),
+        subtitle: Rect::new(tx, 19.0, tw, 15.0),
+        trailing,
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +384,56 @@ mod tests {
     }
 
     #[test]
+    fn region_diam_pas_dengan_pil() {
+        for s in [Shape::single(IDLE), Shape::single(compact_size(200.0)), Shape { main: compact_size(0.0), bubble: true }, Shape::single(Card::Media.size())] {
+            let rest = rest_box(&s);
+            let anim = hit_box(&[s]);
+            assert!(rest.w < anim.w && rest.h < anim.h, "{s:?}: tidak ada area tak terlihat yang menelan klik");
+            assert!(rest.w >= s.total_width() * HOVER_SCALE + 2.0 * FILLET, "{s:?}: lengkung cekung ikut");
+            assert!(rest.h >= s.main.h * HOVER_SCALE && rest.h <= s.main.h * HOVER_SCALE + 1.0, "{s:?}");
+            assert!(window_max().w >= rest.w && window_max().h >= rest.h);
+        }
+    }
+
+    #[test]
+    fn zona_seek_lebih_mudah_diraih_dari_bilah() {
+        let mc = media_card(false);
+        let z = seek_zone(mc.progress);
+        assert!(z.h >= 18.0 && z.contains(mc.progress.center()));
+        assert!(inside(Card::Media.size(), &z));
+        for (_, b) in &mc.buttons {
+            assert!(z.y + z.h <= b.y || b.y + b.h <= z.y, "zona seek tidak menimpa tombol {b:?}");
+        }
+        assert_eq!(seek_fraction(mc.progress, mc.progress.x - 50.0), 0.0);
+        assert_eq!(seek_fraction(mc.progress, mc.progress.x + mc.progress.w / 2.0), 0.5);
+        assert_eq!(seek_fraction(mc.progress, 9_999.0), 1.0);
+        let lc = media_card(true);
+        assert!(inside(Card::Lyrics.size(), &seek_zone(lc.progress)));
+    }
+
+    #[test]
+    fn pil_peek_muat_di_jendela() {
+        for size in [PEEK_IDLE, PEEK_MEDIA] {
+            let p = peek_pill(size);
+            for r in [p.icon, p.title, p.subtitle, p.trailing] {
+                assert!(inside(size, &r), "{r:?}");
+            }
+            assert!(p.title.x + p.title.w < p.trailing.x && p.title.x > p.icon.x + p.icon.w);
+            assert!(rest_box(&Shape::single(size)).w <= window_max().w);
+            assert_eq!(size.h, PILL_H);
+        }
+        const { assert!(PEEK_IDLE.w > IDLE.w && PEEK_MEDIA.w > COMPACT_MAX_W) };
+    }
+
+    #[test]
+    fn zona_pemicu_hanya_di_tepi_paling_atas() {
+        let s = Shape::single(compact_size(200.0));
+        let z = near_zone(&s);
+        assert!(z.h <= LIP, "zona setipis bibir: kursor yang menuju tab browser tidak memicu");
+        assert!(z.w <= s.total_width() + 2.0 * NEAR_X + 1.0 && z.w >= s.retracted().main.w);
+    }
+
+    #[test]
     fn semua_elemen_kartu_di_dalam_kartu() {
         for (lyrics, card) in [(false, Card::Media), (true, Card::Lyrics)] {
             let mc = media_card(lyrics);
@@ -369,7 +463,10 @@ mod tests {
         assert_eq!(hc.buttons.len(), 5);
         for (_, r) in &hc.buttons {
             assert!(inside(Card::Home.size(), r), "{r:?}");
+            assert!(hc.battery.y + hc.battery.h < r.y, "lencana baterai di atas tombol");
         }
+        assert!(inside(Card::Home.size(), &hc.battery));
+        assert!(hc.clock.x + hc.clock.w < hc.battery.x && hc.clock.w >= 120.0);
         let ac = alert_card();
         for r in [ac.mascot, ac.title, ac.subtitle, ac.value] {
             assert!(inside(Size::new(EXPANDED_W, EXPANDED_MIN_H), &r), "{r:?}");

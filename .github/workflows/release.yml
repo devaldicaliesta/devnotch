@@ -69,11 +69,6 @@ jobs:
           } | Set-Content -Encoding utf8NoBOM dist/SHA256SUMS.txt
           Get-Content dist/SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Notchi-${{ env.TAG }}-windows-x64
-          path: dist/*
-
       - name: Terbitkan ke GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}

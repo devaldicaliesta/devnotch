@@ -7,6 +7,7 @@ pub mod gfx;
 pub mod media;
 pub mod net;
 pub mod power;
+pub mod privacy;
 pub mod shell;
 pub mod sys;
 pub mod window;

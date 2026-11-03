@@ -13,7 +13,7 @@ use notchi_platform_win::window::{Event, IconImage, OwnedWindow, UiProxy, create
 use crate::fx::{self, Burst, Spark};
 use crate::ui::{Align, DynText, Mascot, Tone, Ui, mascot};
 
-pub const SIZE: (f32, f32) = (700.0, 630.0);
+pub const SIZE: (f32, f32) = (700.0, 672.0);
 pub const TAG_PANEL_FX: u64 = 4 << 40;
 
 const M: f32 = 24.0;
@@ -33,6 +33,7 @@ pub enum Setting {
     Behavior,
     Liquid,
     Fullscreen,
+    AvoidWindows,
     Style,
     Reduce,
     Mascot,
@@ -58,6 +59,7 @@ pub fn value(cfg: &Config, s: Setting) -> usize {
         Setting::Behavior => cfg.island.behavior.index(),
         Setting::Liquid => cfg.liquid as usize,
         Setting::Fullscreen => cfg.island.hide_in_fullscreen as usize,
+        Setting::AvoidWindows => cfg.island.avoid_windows as usize,
         Setting::Style => cfg.style.index(),
         Setting::Reduce => match cfg.reduce_motion {
             ReduceMotion::System => 0,
@@ -270,7 +272,7 @@ impl Settings {
         let left = M;
         let right = M + COL + GAP;
 
-        let mut y = self.section(&ui, left, TOP, COL, t(lang, Text::SecIsland), 116.0 + 2.0 * ROW)?;
+        let mut y = self.section(&ui, left, TOP, COL, t(lang, Text::SecIsland), 116.0 + 3.0 * ROW)?;
         let behavior_row = Rect::new(left, y, COL, 116.0);
         ui.text(&stage, t(lang, Text::Behavior), TextStyle::new(14.0, Weight::Medium, pal.text), Rect::new(left + INNER, y + 10.0, COL - 2.0 * INNER, 22.0), Align::Left)?;
         let seg = Rect::new(left + INNER, y + 38.0, COL - 2.0 * INNER, 32.0);
@@ -285,6 +287,9 @@ impl Settings {
         y += ROW;
         self.divider(&ui, left, y, COL)?;
         self.toggle(&ui, Setting::Fullscreen, Rect::new(left, y, COL, ROW), t(lang, Text::Fullscreen), None, cfg)?;
+        y += ROW;
+        self.divider(&ui, left, y, COL)?;
+        self.toggle(&ui, Setting::AvoidWindows, Rect::new(left, y, COL, ROW), t(lang, Text::AvoidWindows), None, cfg)?;
         y += ROW;
 
         let mut y2 = self.section(&ui, left, y + 18.0, COL, t(lang, Text::SecLook), 2.0 * ROW)?;

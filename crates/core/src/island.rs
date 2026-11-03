@@ -83,6 +83,7 @@ pub struct Island {
     activity_count: usize,
     alert: Option<ActiveAlert>,
     fullscreen: bool,
+    covered: bool,
     hover: bool,
     snoozed_until: Option<Ms>,
     peek_until: Option<Ms>,
@@ -96,6 +97,7 @@ impl Island {
             activity_count: 0,
             alert: None,
             fullscreen: false,
+            covered: false,
             hover: false,
             snoozed_until: None,
             peek_until: None,
@@ -114,12 +116,27 @@ impl Island {
         self.behavior == Behavior::Autohide
     }
 
+    pub fn set_covered(&mut self, covered: bool) {
+        self.covered = covered;
+        if covered {
+            self.peek_until = None;
+        }
+    }
+
+    pub fn is_covered(&self) -> bool {
+        self.covered
+    }
+
+    pub fn tucks(&self) -> bool {
+        self.autohide() || self.covered
+    }
+
     pub fn peek(&mut self, until: Ms) {
         self.peek_until = Some(self.peek_until.map_or(until, |p| p.max(until)));
     }
 
     pub fn is_retracted(&self, now: Ms) -> bool {
-        if !self.autohide() || self.hover || self.peek_until.is_some_and(|t| now < t) {
+        if !self.tucks() || self.hover || self.peek_until.is_some_and(|t| now < t) {
             return false;
         }
         matches!(self.presentation(now), Presentation::Idle | Presentation::Compact | Presentation::Minimal)
@@ -379,6 +396,45 @@ mod tests {
         assert_eq!(i.next_deadline(), Some(2_500));
         assert!(i.tick(2_500));
         assert!(i.is_retracted(2_500));
+    }
+
+    #[test]
+    fn menyingkir_saat_jendela_menempati_tepi_atas() {
+        let mut i = Island::new(Behavior::Sticky);
+        i.set_activity_count(1);
+        assert!(!i.is_retracted(0));
+        i.set_covered(true);
+        assert!(i.tucks() && i.is_covered());
+        assert!(i.is_retracted(0), "browser maximize: pil masuk ke tepi agar tab tidak tertutup");
+        assert_eq!(i.presentation(0), Presentation::Compact, "isi tetap, hanya posisinya");
+        i.set_hover(true);
+        assert!(!i.is_retracted(0), "kursor ditahan di notch: turun");
+        i.set_hover(false);
+        i.click(0);
+        assert!(!i.is_retracted(0), "kartu terbuka tetap tampil");
+        i.collapse();
+        i.push_alert(charging(), 0);
+        assert!(!i.is_retracted(100), "alert tetap menyembul");
+        i.set_covered(false);
+        assert!(!i.is_retracted(5_000), "kembali ke desktop: menempel lagi");
+
+        let mut h = Island::new(Behavior::Hide);
+        h.set_covered(true);
+        assert_eq!(h.presentation(0), Presentation::Hidden);
+        assert!(!h.is_retracted(0));
+        h.set_activity_count(1);
+        assert!(h.is_retracted(0), "aktivitas di atas browser cukup tampil sebagai bibir");
+    }
+
+    #[test]
+    fn tertutup_membatalkan_peek() {
+        let mut i = Island::new(Behavior::Autohide);
+        i.set_activity_count(1);
+        i.peek(2_500);
+        assert!(!i.is_retracted(100));
+        i.set_covered(true);
+        assert!(i.is_retracted(100), "aktivitas baru tidak menyembul di atas tab");
+        assert_eq!(i.next_deadline(), None);
     }
 
     #[test]

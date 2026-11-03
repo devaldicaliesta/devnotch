@@ -2,7 +2,7 @@
 
 Island interaktif, menu bar, dan Dock bergaya macOS untuk Windows 11, ditulis dengan Rust agar ringan.
 
-> **Status:** Island Fase 1 sudah berjalan (Rust): perilaku Otomatis/Menempel/Sembunyi, jendela Pengaturan (`Notchi.exe --settings`), gaya gelap Neumorphism dan Clay 3D, maskot interaktif, partikel, serta lirik tersinkron opsional dari LRCLIB. Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
+> **Status:** Island Fase 1 sudah berjalan (Rust): perilaku Otomatis/Menempel/Sembunyi, jendela Pengaturan (`Notchi.exe --settings`), gaya gelap Neumorphism dan Clay 3D, maskot interaktif, partikel, serta lirik tersinkron opsional dari LRCLIB. Sejak v0.2.0: peek interaktif saat notch di-hover (jam, tanggal, baterai, maskot; atau judul lagu dan putar/jeda), Island menyingkir dari tab browser, seek di bilah progres, klik tengah untuk putar/jeda, scroll untuk mengatur timer, dan indikator mikrofon/kamera. Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
 
 ## Unduh
 

@@ -164,7 +164,9 @@ Nilai warna adalah usulan awal yang harus lulus kontras WCAG AA (4,5:1) di atas 
 
 Island adalah jendela kecil berbentuk pil, selalu di atas, yang berubah ukuran mengikuti aktivitas live yang sedang berjalan. Di iPhone fitur ini bernama Dynamic Island; di Mac, Tahoe menampilkan Live Activities dari iPhone di menu bar ([MacStories](https://www.macstories.net/news/macos-tahoe-the-macstories-overview/)), sehingga Island di sini adalah gabungan keduanya untuk Windows. Karena PC tidak punya notch, perilakunya dapat dipilih (`island.behavior`, juga di jendela Pengaturan dan menu klik kanan): **Otomatis** (`autohide`, default), **Menempel** (`sticky`, selalu tampil), dan **Sembunyi** (`hide`, hanya muncul saat ada aktivitas atau alert). Pada Fase 1 Island berjalan sebagai overlay tanpa menu bar.
 
-Island **menempel di tepi atas layar** seperti notch: sisi atasnya rata dengan tepi layar, sudut bawahnya membulat, dan di pertemuan dengan tepi ada lengkung cekung kecil (10 dp) sehingga pil tampak seperti cairan yang menetes dari tepi. Pada perilaku **Otomatis**, Island masuk ke tepi atas dan hanya menyisakan bibir 4 dp; ia turun saat kursor masuk ke zona tipis (10 dp) di sekitar notch dan naik lagi 300 ms setelah kursor pergi. Alert, kartu yang terbuka, dan aktivitas baru (menyembul 2,5 detik) selalu tampil penuh. Saat tersembunyi, isi pil dilepas sehingga tidak ada animasi maupun timer yang berjalan.
+Island **menempel di tepi atas layar** seperti notch: sisi atasnya rata dengan tepi layar, sudut bawahnya membulat, dan di pertemuan dengan tepi ada lengkung cekung kecil (10 dp) sehingga pil tampak seperti cairan yang menetes dari tepi. Pada perilaku **Otomatis**, Island masuk ke tepi atas dan hanya menyisakan bibir 4 dp; ia turun setelah kursor ditahan 200 ms di zona setipis bibir itu (4 dp, selebar notch + 8 dp tiap sisi) dan naik lagi 300 ms setelah kursor pergi. Kursor yang sekadar lewat menuju tab browser tidak memicu apa pun, dan klik maupun scroll saat Island masih masuk diabaikan. Saat turun tanpa aktivitas, Island menampilkan **peek**: maskot yang matanya mengikuti kursor (klik untuk memantul), jam, tanggal singkat, dan baterai; saat ada media, peek menampilkan judul, artis, dan tombol putar/jeda. Alert, kartu yang terbuka, dan aktivitas baru (menyembul 2,5 detik) selalu tampil penuh. Saat tersembunyi, isi pil dilepas sehingga tidak ada animasi maupun timer yang berjalan.
+
+Island juga **menyingkir dari jendela** (`island.avoid_windows`, default aktif, juga di Pengaturan): bila jendela aplikasi menempati tepi atas di bawah notch, misalnya browser yang dimaksimalkan, Island masuk ke tepi atas pada semua perilaku dan tidak menyembul untuk aktivitas baru, sehingga tab browser tetap bisa diklik. Status ini diperiksa ulang lewat shell hook dan WinEvent saat jendela dibuat, dipindah, diminimalkan, atau berganti fokus.
 
 ### 3.1 State dan ukuran
 
@@ -218,13 +220,15 @@ Alert dan layar penuh dapat menyela state normal mana pun; setelah selesai, Isla
 
 | Aksi | Hasil |
 | --- | --- |
-| Hover pada pil | Pil membesar 1,05× dan menampilkan petunjuk (peek); mata maskot mengikuti kursor, tombol membesar saat disorot dan mengecil saat ditekan |
-| Klik maskot di kartu | Maskot memantul (squash-stretch), tersipu, dan memercikkan partikel |
+| Hover pada pil | Pil kosong atau pil media melebar menjadi peek (jam, tanggal, baterai; atau judul, artis, putar/jeda); pil aktivitas lain membesar 1,05×. Mata maskot mengikuti kursor, tombol membesar saat disorot dan mengecil saat ditekan |
+| Klik maskot di peek atau kartu | Maskot memantul (squash-stretch), tersipu, dan memercikkan partikel |
 | Klik | Expand/collapse |
+| Klik tengah | Putar/jeda media; tanpa media, jeda/lanjutkan timer atau stopwatch |
+| Klik atau seret bilah progres kartu media | Lompat ke posisi itu (seek) bila sumber mendukung; kenop muncul saat disorot dan waktu pratinjau tampil selama diseret |
 | Tahan 350 ms | Expand dengan umpan balik gerak (tanpa haptic di PC) |
 | Klik kanan | Menu: Timer, Stopwatch, Perilaku, Sembunyikan 1 jam, Mulai bersama Windows, Pengaturan, Tentang, Keluar |
 | Geser dua jari / seret horizontal | Ganti ke aktivitas berikutnya atau sebelumnya |
-| Scroll di atas pil | Mengatur volume media |
+| Scroll di atas pil | Mengatur volume media; di atas timer, menambah atau mengurangi 1 menit per takik |
 | Esc atau klik di luar | Collapse |
 | Hotkey global (dapat diubah) | Buka/tutup Island tanpa mouse |
 | Layar sentuh | Tap, tahan, dan geser setara mouse |

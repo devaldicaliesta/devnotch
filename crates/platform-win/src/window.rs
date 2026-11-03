@@ -8,10 +8,12 @@ use notchi_core::color::Color;
 use notchi_core::hotkey::Hotkey;
 use notchi_core::lyrics::Lyrics;
 use notchi_core::media::{Artwork, MediaSnapshot};
+use notchi_core::privacy::Privacy;
 use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
-    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_EXCLUDED_FROM_PEEK, DWMWA_TRANSITIONS_FORCEDISABLED,
-    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute,
+    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_CLOAKED, DWMWA_EXCLUDED_FROM_PEEK, DWMWA_EXTENDED_FRAME_BOUNDS,
+    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    DwmGetWindowAttribute, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, CreateRectRgn, SetWindowRgn, DIB_RGB_COLORS, DeleteObject,
@@ -45,6 +47,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_DPICHANGED, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NULL, WM_POWERBROADCAST, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETTINGCHANGE,
     WM_TIMER, WNDCLASSEXW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    DeregisterShellHookWindow, EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MOVESIZEEND, GW_HWNDNEXT, GW_OWNER, GWL_EXSTYLE,
+    GetClassNameW, GetTopWindow, GetWindow, GetWindowLongW, GetWindowRect, HSHELL_GETMINRECT, HSHELL_MONITORCHANGED,
+    HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED, RegisterShellHookWindow, WS_EX_TRANSPARENT,
 };
 use windows::core::{BOOL, PCWSTR, w};
 use windows_core::{HSTRING, Result};
@@ -59,6 +64,8 @@ const WM_APP_APPBAR: u32 = WM_APP + 3;
 const WM_APP_FOREGROUND: u32 = WM_APP + 4;
 const WM_APP_CAPTURE: u32 = WM_APP + 5;
 const WM_APP_SECOND_INSTANCE: u32 = WM_APP + 6;
+const WM_APP_ARRANGE: u32 = WM_APP + 7;
+const MAX_Z_WALK: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
@@ -87,6 +94,7 @@ pub enum Event {
     SettingsChanged,
     PowerChanged,
     FullscreenHint(bool),
+    WindowsArranged,
     ForegroundChanged,
     ForeignMouseDown,
     Tray(TrayEvent),
@@ -101,6 +109,7 @@ pub enum Event {
     Key(u32),
     Panel(Box<Event>),
     Lyrics { track_id: u64, lyrics: Option<Lyrics>, failed: bool },
+    Privacy(Privacy),
 }
 
 type Handler = Box<dyn FnMut(&Window, Event)>;
@@ -112,6 +121,7 @@ struct WindowState {
     dispatching: Cell<bool>,
     tracking_mouse: Cell<bool>,
     taskbar_created: u32,
+    shell_hook: u32,
     panel: bool,
 }
 
@@ -142,6 +152,8 @@ pub struct OwnedWindow {
     state: *const WindowState,
     power: Vec<HPOWERNOTIFY>,
     appbar: bool,
+    shell: bool,
+    arrange: Vec<HWINEVENTHOOK>,
     icon: Option<HICON>,
 }
 
@@ -278,9 +290,19 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         }
         WM_APP_FOREGROUND => send(Event::ForegroundChanged),
         WM_APP_CAPTURE => send(Event::ForeignMouseDown),
+        WM_APP_ARRANGE => send(Event::WindowsArranged),
         WM_APP_SECOND_INSTANCE => send(if wparam.0 == 1 { Event::OpenSettings } else { Event::SecondInstance }),
         WM_DESTROY => {}
         m if m == state.taskbar_created && m != 0 => send(Event::TaskbarCreated),
+        m if m == state.shell_hook && m != 0 => {
+            let code = wparam.0 as u32 & 0x7FFF;
+            if matches!(
+                code,
+                HSHELL_WINDOWCREATED | HSHELL_WINDOWDESTROYED | HSHELL_WINDOWACTIVATED | HSHELL_GETMINRECT | HSHELL_MONITORCHANGED
+            ) {
+                send(Event::WindowsArranged);
+            }
+        }
         _ => {}
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -330,11 +352,12 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
             dispatching: Cell::new(false),
             tracking_mouse: Cell::new(false),
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
+            shell_hook: RegisterWindowMessageW(w!("SHELLHOOK")),
             panel: false,
         });
         let state = Box::into_raw(state);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
-        Ok(OwnedWindow { window: Window { hwnd }, state, power: Vec::new(), appbar: false, icon: None })
+        Ok(OwnedWindow { window: Window { hwnd }, state, power: Vec::new(), appbar: false, shell: false, arrange: Vec::new(), icon: None })
     }
 }
 
@@ -386,6 +409,7 @@ pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, icon: &I
             dispatching: Cell::new(false),
             tracking_mouse: Cell::new(false),
             taskbar_created: 0,
+            shell_hook: 0,
             panel: true,
         });
         let state = Box::into_raw(state);
@@ -396,13 +420,62 @@ pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, icon: &I
                 SendMessageW(hwnd, WM_SETICON, Some(WPARAM(kind as usize)), Some(LPARAM(i.0 as isize)));
             }
         }
-        Ok(OwnedWindow { window: Window { hwnd }, state, power: Vec::new(), appbar: false, icon: hicon })
+        Ok(OwnedWindow { window: Window { hwnd }, state, power: Vec::new(), appbar: false, shell: false, arrange: Vec::new(), icon: hicon })
     }
 }
 
 thread_local! {
     static HOOK_TARGETS: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) };
     static OUTSIDE_HOOKS: RefCell<Vec<HWINEVENTHOOK>> = const { RefCell::new(Vec::new()) };
+    static ARRANGE_TARGETS: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) };
+}
+
+extern "system" fn arrange_event_proc(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    ARRANGE_TARGETS.with(|t| {
+        for &h in t.borrow().iter() {
+            unsafe {
+                let _ = PostMessageW(Some(HWND(h as *mut c_void)), WM_APP_ARRANGE, WPARAM(0), LPARAM(0));
+            }
+        }
+    });
+}
+
+fn frame_bounds(hwnd: HWND) -> Option<RECT> {
+    let mut r = RECT::default();
+    let dwm = unsafe {
+        DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut RECT as *mut c_void, size_of::<RECT>() as u32)
+    };
+    (dwm.is_ok() || unsafe { GetWindowRect(hwnd, &mut r) }.is_ok()).then_some(r)
+}
+
+fn is_app_window(hwnd: HWND) -> bool {
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() || GetWindow(hwnd, GW_OWNER).is_ok() {
+            return false;
+        }
+        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        if ex & (WS_EX_TOOLWINDOW.0 | WS_EX_TRANSPARENT.0) != 0 {
+            return false;
+        }
+        let mut cloaked = 0u32;
+        let read = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, size_of::<u32>() as u32);
+        !(read.is_ok() && cloaked != 0)
+    }
+}
+
+fn is_desktop(hwnd: HWND) -> bool {
+    let mut buf = [0u16; 64];
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) }.max(0) as usize;
+    let class = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+    ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"].iter().any(|c| class.eq_ignore_ascii_case(c))
 }
 
 extern "system" fn win_event_proc(
@@ -476,11 +549,51 @@ impl OwnedWindow {
         self.appbar = false;
     }
 
+    pub fn register_window_notifications(&mut self) {
+        if !self.shell {
+            self.shell = unsafe { RegisterShellHookWindow(self.window.hwnd) }.as_bool();
+        }
+        let target = self.window.hwnd.0 as isize;
+        ARRANGE_TARGETS.with(|t| {
+            let mut t = t.borrow_mut();
+            if !t.contains(&target) {
+                t.push(target);
+            }
+        });
+        if !self.arrange.is_empty() {
+            return;
+        }
+        for event in [EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MINIMIZEEND] {
+            let hook = unsafe {
+                SetWinEventHook(event, event, None, Some(arrange_event_proc), 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS)
+            };
+            if !hook.is_invalid() {
+                self.arrange.push(hook);
+            }
+        }
+    }
+
+    fn unregister_window_notifications(&mut self) {
+        for h in self.arrange.drain(..) {
+            unsafe {
+                let _ = UnhookWinEvent(h);
+            }
+        }
+        let target = self.window.hwnd.0 as isize;
+        ARRANGE_TARGETS.with(|t| t.borrow_mut().retain(|&h| h != target));
+        if self.shell {
+            unsafe {
+                let _ = DeregisterShellHookWindow(self.window.hwnd);
+            }
+            self.shell = false;
+        }
+    }
 }
 
 impl Drop for OwnedWindow {
     fn drop(&mut self) {
         self.window.watch_outside(false);
+        self.unregister_window_notifications();
         unsafe {
             for p in self.power.drain(..) {
                 let _ = UnregisterPowerSettingNotification(p);
@@ -629,6 +742,25 @@ impl Window {
 
     pub fn is_visible(&self) -> bool {
         unsafe { IsWindowVisible(self.hwnd).as_bool() }
+    }
+
+    pub fn app_beneath(&self, x: i32, y: i32) -> bool {
+        let mut next = unsafe { GetTopWindow(None) }.ok();
+        for _ in 0..MAX_Z_WALK {
+            let Some(hwnd) = next else { break };
+            if hwnd != self.hwnd
+                && is_app_window(hwnd)
+                && let Some(r) = frame_bounds(hwnd)
+                && x >= r.left
+                && x < r.right
+                && y >= r.top
+                && y < r.bottom
+            {
+                return !is_desktop(hwnd);
+            }
+            next = unsafe { GetWindow(hwnd, GW_HWNDNEXT) }.ok();
+        }
+        false
     }
 
     pub fn set_timer(&self, id: usize, ms: u32) {

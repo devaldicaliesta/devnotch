@@ -69,6 +69,7 @@ pub enum Text {
     SegOn,
     SegOff,
     Fullscreen,
+    AvoidWindows,
     ShowMascot,
     MascotColor,
     MediaControls,
@@ -173,8 +174,8 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, SegSticky) => "Sticky",
         (Lang::Id, SegHide) => "Sembunyi",
         (Lang::En, SegHide) => "Hide",
-        (Lang::Id, DescAutohide) => "Masuk ke tepi atas; turun saat kursor mendekati notch.",
-        (Lang::En, DescAutohide) => "Tucks into the top edge; drops down when the cursor nears the notch.",
+        (Lang::Id, DescAutohide) => "Masuk ke tepi atas; turun saat kursor ditahan di notch.",
+        (Lang::En, DescAutohide) => "Tucks into the top edge; drops down when the cursor rests on the notch.",
         (Lang::Id, DescSticky) => "Selalu tampil menempel di tepi atas layar.",
         (Lang::En, DescSticky) => "Always visible, attached to the top edge of the screen.",
         (Lang::Id, DescHide) => "Tersembunyi; hanya muncul saat ada aktivitas atau alert.",
@@ -199,6 +200,8 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, SegOff) => "Off",
         (Lang::Id, Fullscreen) => "Sembunyi saat layar penuh",
         (Lang::En, Fullscreen) => "Hide in full screen",
+        (Lang::Id, AvoidWindows) => "Menyingkir dari tab browser",
+        (Lang::En, AvoidWindows) => "Make way for browser tabs",
         (Lang::Id, ShowMascot) => "Tampilkan maskot",
         (Lang::En, ShowMascot) => "Show mascot",
         (Lang::Id, MascotColor) => "Warna",
@@ -243,6 +246,16 @@ const MONTHS_ID: [&str; 12] =
 const MONTHS_EN: [&str; 12] =
     ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+pub fn short_date(lang: Lang, weekday: u8, day: u8, month: u8) -> String {
+    let w = weekday as usize % 7;
+    let m = (month.clamp(1, 12) - 1) as usize;
+    let cut = |s: &str| s.chars().take(3).collect::<String>();
+    match lang {
+        Lang::Id => format!("{}, {} {}", cut(DAYS_ID[w]), day, cut(MONTHS_ID[m])),
+        Lang::En => format!("{}, {} {}", cut(DAYS_EN[w]), cut(MONTHS_EN[m]), day),
+    }
+}
+
 pub fn long_date(lang: Lang, weekday: u8, day: u8, month: u8) -> String {
     let w = weekday as usize % 7;
     let m = (month.clamp(1, 12) - 1) as usize;
@@ -260,6 +273,8 @@ mod tests {
     fn tanggal() {
         assert_eq!(long_date(Lang::Id, 6, 31, 10), "Sabtu, 31 Oktober");
         assert_eq!(long_date(Lang::En, 6, 31, 10), "Saturday, October 31");
+        assert_eq!(short_date(Lang::Id, 2, 3, 11), "Sel, 3 Nov");
+        assert_eq!(short_date(Lang::En, 2, 3, 11), "Tue, Nov 3");
     }
 
     #[test]

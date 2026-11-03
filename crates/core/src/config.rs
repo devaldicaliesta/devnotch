@@ -20,6 +20,7 @@ pub struct IslandConfig {
     pub behavior: Behavior,
     pub hotkey: Hotkey,
     pub hide_in_fullscreen: bool,
+    pub avoid_windows: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +75,7 @@ impl Default for Config {
                 behavior: Behavior::Autohide,
                 hotkey: Hotkey::parse(DEFAULT_HOTKEY).expect("hotkey default valid"),
                 hide_in_fullscreen: true,
+                avoid_windows: true,
             },
             style: Style::Neumorphism,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
@@ -104,13 +106,17 @@ language = "id"
 [island]
 # Perilaku pil yang menempel di tepi atas layar:
 #   "autohide"  masuk ke tepi dan menyisakan bibir tipis; turun saat kursor
-#               didekatkan ke notch. Alert dan aktivitas baru tetap menyembul.
+#               ditahan sebentar di tepi paling atas, tepat di notch.
+#               Alert dan aktivitas baru tetap menyembul.
 #   "sticky"    selalu tampil menempel di tepi atas.
 #   "hide"      tersembunyi; hanya muncul saat ada aktivitas atau alert.
 behavior = "autohide"
 # Buka/tutup Island tanpa mouse.
 hotkey = "Ctrl+Alt+N"
 hide_in_fullscreen = true
+# Saat jendela aplikasi (misalnya browser yang di-maximize) berada tepat di
+# bawah notch, Island masuk ke tepi atas agar tab dan bilah judul tidak tertutup.
+avoid_windows = true
 
 [appearance]
 # "neumorphism" (permukaan lembut timbul), "clay" (tombol 3D seperti tanah liat),
@@ -290,7 +296,7 @@ impl<'a> Reader<'a> {
 pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
 
 const KNOWN: &[(&str, &[&str])] = &[
-    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "mode", "autohide", "top_margin"]),
+    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "mode", "autohide", "top_margin"]),
     ("appearance", &["style"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds", "lyrics"]),
@@ -359,6 +365,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     };
     let hotkey = r.parsed("island.hotkey", d.island.hotkey, Hotkey::parse);
     let hide_in_fullscreen = r.bool("island.hide_in_fullscreen", d.island.hide_in_fullscreen);
+    let avoid_windows = r.bool("island.avoid_windows", d.island.avoid_windows);
     let style = r.parsed("appearance.style", d.style, |s| {
         Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", atau \"classic\"".into())
     });
@@ -395,7 +402,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
 
     let config = Config {
         language,
-        island: IslandConfig { behavior, hotkey, hide_in_fullscreen },
+        island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows },
         style,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger, lyrics },
@@ -605,6 +612,15 @@ low_thresholds = [15, 0, "x"]
         assert!(out.find("hide_in_fullscreen").unwrap() < out.find("[media]").unwrap());
         let out = set_value("", "startup", "launch_at_login", "true");
         assert!(parse(&out).0.launch_at_login);
+    }
+
+    #[test]
+    fn menyingkir_dari_jendela_bisa_dimatikan() {
+        assert!(Config::default().island.avoid_windows);
+        let out = set_value(DEFAULT_TOML, "island", "avoid_windows", "false");
+        let (c, w) = parse(&out);
+        assert!(w.is_empty(), "{w:?}");
+        assert!(!c.island.avoid_windows);
     }
 
     #[test]
