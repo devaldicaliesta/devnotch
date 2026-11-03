@@ -56,8 +56,7 @@ function Shot([string] $name) {
     $x = $cx - [int]($w / 2)
     $bmp = New-Object System.Drawing.Bitmap $w, $h
     $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $op = [System.Drawing.CopyPixelOperation]([int][System.Drawing.CopyPixelOperation]::SourceCopy -bor [int][System.Drawing.CopyPixelOperation]::CaptureBlt)
-    $g.CopyFromScreen($x, $top, 0, 0, (New-Object System.Drawing.Size $w, $h), $op)
+    $g.CopyFromScreen($x, $top, 0, 0, (New-Object System.Drawing.Size $w, $h))
     $bmp.Save((Join-Path $Out "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
     $g.Dispose()
     $bmp.Dispose()
