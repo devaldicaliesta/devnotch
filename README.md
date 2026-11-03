@@ -4,6 +4,12 @@ Island interaktif, menu bar, dan Dock bergaya macOS untuk Windows 11, ditulis de
 
 > **Status:** Island Fase 1 sudah berjalan (Rust): perilaku Otomatis/Menempel/Sembunyi, jendela Pengaturan (`Notchi.exe --settings`), gaya gelap Neumorphism dan Clay 3D, maskot interaktif, partikel, serta lirik tersinkron opsional dari LRCLIB. Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
 
+## Unduh
+
+Exe portabel tersedia di [GitHub Releases](https://github.com/devaldicaliesta/devnotch/releases/latest): unduh `Notchi-<versi>-windows-x64.exe`, lalu jalankan. Tidak perlu instalasi atau hak admin. Butuh Windows 11 22H2 atau lebih baru (x64).
+
+Setiap tag `v*` memicu workflow [`release.yml`](.github/workflows/release.yml), yang menguji, membangun, lalu melampirkan exe, zip, dan `SHA256SUMS.txt` ke rilisnya.
+
 ## Rencana singkat
 
 - **Island lebih dulu** (Fase 1–2): pil interaktif di tengah atas layar untuk musik/video (termasuk YouTube Music dan Apple Music), timer, pengisian daya, notifikasi, dan lainnya, dengan maskot orisinal yang juga bernama **Notchi**.

@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag rilis, misalnya v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Pasang toolchain dari rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - name: Cocokkan tag dengan versi Cargo
+        run: |
+          $meta = cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'notchi').version
+          if ("v$version" -ne $env:TAG) {
+            Write-Error "Tag $env:TAG tidak cocok dengan versi Cargo v$version"
+            exit 1
+          }
+
+      - name: Uji
+        run: cargo test --workspace --locked
+
+      - name: Build release
+        run: cargo build --release --locked -p notchi
+
+      - name: Uji jalan exe
+        run: |
+          $p = Start-Process -FilePath target/release/Notchi.exe -ArgumentList '--version' -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Error "Notchi.exe --version keluar dengan kode $($p.ExitCode)"
+            exit 1
+          }
+
+      - name: Kemas
+        run: |
+          $name = "Notchi-$env:TAG-windows-x64"
+          New-Item -ItemType Directory -Force dist, "stage/$name" | Out-Null
+          Copy-Item target/release/Notchi.exe "dist/$name.exe"
+          Copy-Item target/release/Notchi.exe, README.md, LICENSE, LICENSE-ASSETS.md, TRADEMARKS.md "stage/$name/"
+          Compress-Archive -Path "stage/$name" -DestinationPath "dist/$name.zip"
+          Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content -Encoding utf8NoBOM dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Notchi-${{ env.TAG }}-windows-x64
+          path: dist/*
+
+      - name: Terbitkan ke GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = (Get-ChildItem dist -File).FullName
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG @assets --clobber
+          } else {
+            $notes = "docs/rilis/$env:TAG.md"
+            $body = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+            gh release create $env:TAG @assets --title "Notchi $env:TAG" --target $env:GITHUB_SHA @body
+          }
+          exit $LASTEXITCODE
