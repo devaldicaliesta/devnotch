@@ -2,6 +2,7 @@ use crate::color::Skin;
 use crate::hotkey::Hotkey;
 use crate::i18n::Lang;
 use crate::island::Behavior;
+use crate::layout::{HoverZone, Placement};
 use crate::theme::Style;
 use toml::{Table, Value};
 
@@ -21,6 +22,8 @@ pub struct IslandConfig {
     pub hotkey: Hotkey,
     pub hide_in_fullscreen: bool,
     pub avoid_windows: bool,
+    pub position: Placement,
+    pub hover_zone: HoverZone,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +79,8 @@ impl Default for Config {
                 hotkey: Hotkey::parse(DEFAULT_HOTKEY).expect("hotkey default valid"),
                 hide_in_fullscreen: true,
                 avoid_windows: true,
+                position: Placement::Center,
+                hover_zone: HoverZone::Small,
             },
             style: Style::Neumorphism,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
@@ -117,6 +122,13 @@ hide_in_fullscreen = true
 # Saat jendela aplikasi (misalnya browser yang di-maximize) berada tepat di
 # bawah notch, Island masuk ke tepi atas agar tab dan bilah judul tidak tertutup.
 avoid_windows = true
+# Letak pil di tepi atas: "center" (tengah, di notch), "left", atau "right".
+# "right" menjauhkan Island dari deretan tab browser.
+position = "center"
+# Zona pemicu saat pil masuk ke tepi:
+#   "small"   selebar bibir, setipis 2 dp, kursor harus diam 0,4 detik.
+#   "normal"  selebar pil, 4 dp, ditahan 0,2 detik.
+hover_zone = "small"
 
 [appearance]
 # "neumorphism" (permukaan lembut timbul), "clay" (tombol 3D seperti tanah liat),
@@ -296,7 +308,7 @@ impl<'a> Reader<'a> {
 pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
 
 const KNOWN: &[(&str, &[&str])] = &[
-    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "mode", "autohide", "top_margin"]),
+    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "position", "hover_zone", "mode", "autohide", "top_margin"]),
     ("appearance", &["style"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds", "lyrics"]),
@@ -366,6 +378,12 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let hotkey = r.parsed("island.hotkey", d.island.hotkey, Hotkey::parse);
     let hide_in_fullscreen = r.bool("island.hide_in_fullscreen", d.island.hide_in_fullscreen);
     let avoid_windows = r.bool("island.avoid_windows", d.island.avoid_windows);
+    let position = r.parsed("island.position", d.island.position, |s| {
+        Placement::from_key(s).ok_or("harus \"center\", \"left\", atau \"right\"".into())
+    });
+    let hover_zone = r.parsed("island.hover_zone", d.island.hover_zone, |s| {
+        HoverZone::from_key(s).ok_or("harus \"small\" atau \"normal\"".into())
+    });
     let style = r.parsed("appearance.style", d.style, |s| {
         Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", atau \"classic\"".into())
     });
@@ -402,7 +420,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
 
     let config = Config {
         language,
-        island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows },
+        island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows, position, hover_zone },
         style,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger, lyrics },
@@ -621,6 +639,23 @@ low_thresholds = [15, 0, "x"]
         let (c, w) = parse(&out);
         assert!(w.is_empty(), "{w:?}");
         assert!(!c.island.avoid_windows);
+    }
+
+    #[test]
+    fn posisi_dan_zona_hover() {
+        let d = Config::default();
+        assert_eq!(d.island.position, Placement::Center);
+        assert_eq!(d.island.hover_zone, HoverZone::Small);
+        let out = set_value(DEFAULT_TOML, "island", "position", "\"right\"");
+        let out = set_value(&out, "island", "hover_zone", "\"normal\"");
+        let (c, w) = parse(&out);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.island.position, Placement::Right);
+        assert_eq!(c.island.hover_zone, HoverZone::Normal);
+        let (c, w) = parse("[island]\nposition = \"atas\"\nhover_zone = 3\n");
+        assert_eq!(c.island.position, Placement::Center);
+        assert_eq!(c.island.hover_zone, HoverZone::Small);
+        assert_eq!(w.len(), 2, "{w:?}");
     }
 
     #[test]

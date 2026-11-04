@@ -95,9 +95,97 @@ const LIP_RATIO: f32 = 0.5;
 const LIP_MIN_W: f32 = 56.0;
 pub const NEAR_X: f32 = 8.0;
 pub const NEAR_Y: f32 = 4.0;
+pub const NEAR_Y_SMALL: f32 = 2.0;
 
-pub fn near_zone(shape: &Shape) -> Size {
-    Size::new((shape.total_width() + 2.0 * NEAR_X).ceil(), NEAR_Y)
+/// Seberapa besar zona pemicu di tepi atas saat Island masuk ke tepi.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HoverZone {
+    /// Selebar bibir yang terlihat, setinggi 2 dp, dan kursor harus diam sebentar.
+    #[default]
+    Small,
+    /// Selebar pil penuh ditambah bantalan, setinggi bibir (4 dp).
+    Normal,
+}
+
+impl HoverZone {
+    pub const ALL: [HoverZone; 2] = [HoverZone::Small, HoverZone::Normal];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            HoverZone::Small => "small",
+            HoverZone::Normal => "normal",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|z| *z == self).unwrap_or(0)
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|z| z.key().eq_ignore_ascii_case(key))
+    }
+
+    /// Lama kursor harus ditahan di zona sebelum Island turun.
+    pub fn dwell_ms(self) -> u32 {
+        match self {
+            HoverZone::Small => 400,
+            HoverZone::Normal => 200,
+        }
+    }
+
+    /// Zona kecil menuntut kursor diam: gerakan lebih dari ini mengulang hitungan.
+    pub fn rest_tolerance(self) -> Option<f32> {
+        match self {
+            HoverZone::Small => Some(3.0),
+            HoverZone::Normal => None,
+        }
+    }
+}
+
+pub fn near_zone(shape: &Shape, zone: HoverZone) -> Size {
+    match zone {
+        HoverZone::Normal => Size::new((shape.total_width() + 2.0 * NEAR_X).ceil(), NEAR_Y),
+        HoverZone::Small => Size::new(shape.retracted().main.w.ceil(), NEAR_Y_SMALL),
+    }
+}
+
+/// Letak Island di sepanjang tepi atas layar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Placement {
+    #[default]
+    Center,
+    Left,
+    Right,
+}
+
+impl Placement {
+    pub const ALL: [Placement; 3] = [Placement::Center, Placement::Left, Placement::Right];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Placement::Center => "center",
+            Placement::Left => "left",
+            Placement::Right => "right",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|p| *p == self).unwrap_or(0)
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.key().eq_ignore_ascii_case(key))
+    }
+
+    /// Posisi kiri jendela Island (piksel). Di kiri/kanan jendela menempel ke tepi layar,
+    /// sehingga kartu terlebar tetap muat dan pil kecil duduk agak menjauh dari sudut.
+    pub fn window_x(self, mon_left: i32, mon_width: i32, window_w: i32) -> i32 {
+        match self {
+            Placement::Center => mon_left + (mon_width - window_w) / 2,
+            Placement::Left => mon_left,
+            Placement::Right => mon_left + mon_width - window_w,
+        }
+    }
 }
 
 pub fn rest_box(shape: &Shape) -> Size {
@@ -124,7 +212,7 @@ pub fn union(a: Size, b: Size) -> Size {
 pub fn window_max() -> Size {
     let card = Shape::single(Size::new(EXPANDED_W, EXPANDED_MAX_H));
     let minimal = Shape { main: compact_size(COMPACT_MAX_W), bubble: true };
-    union(hit_box(&[card, minimal]), near_zone(&card))
+    union(hit_box(&[card, minimal]), near_zone(&card, HoverZone::Normal))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,7 +453,7 @@ mod tests {
         assert!(w.h >= Card::Media.height() * HOVER_SCALE);
         let max = window_max();
         assert!(max.w >= w.w && max.h >= w.h, "jendela tetap memuat semua region");
-        assert!(max.w >= near_zone(&b).w);
+        assert!(max.w >= near_zone(&b, HoverZone::Normal).w);
     }
 
     #[test]
@@ -376,10 +464,10 @@ mod tests {
         assert!(r.main.w < s.main.w && !r.bubble);
         let m = Shape { main: compact_size(0.0), bubble: true };
         assert!(m.retracted().main.w <= m.total_width());
-        let z = near_zone(&s);
+        let z = near_zone(&s, HoverZone::Normal);
         assert!(z.w > s.total_width() && z.h >= LIP);
-        assert!(near_zone(&m).w > m.total_width());
-        let open = union(hit_box(&[s]), near_zone(&s));
+        assert!(near_zone(&m, HoverZone::Normal).w > m.total_width());
+        let open = union(hit_box(&[s]), near_zone(&s, HoverZone::Normal));
         assert!(open.w >= z.w && open.h >= z.h);
     }
 
@@ -428,9 +516,30 @@ mod tests {
     #[test]
     fn zona_pemicu_hanya_di_tepi_paling_atas() {
         let s = Shape::single(compact_size(200.0));
-        let z = near_zone(&s);
+        let z = near_zone(&s, HoverZone::Normal);
         assert!(z.h <= LIP, "zona setipis bibir: kursor yang menuju tab browser tidak memicu");
         assert!(z.w <= s.total_width() + 2.0 * NEAR_X + 1.0 && z.w >= s.retracted().main.w);
+        let k = near_zone(&s, HoverZone::Small);
+        assert!(k.h < z.h && k.w < z.w, "zona kecil lebih sempit dan lebih tipis");
+        assert_eq!(k.w, s.retracted().main.w.ceil(), "zona kecil persis selebar bibir");
+        assert!(HoverZone::Small.dwell_ms() > HoverZone::Normal.dwell_ms());
+        let card = Shape::single(Card::Lyrics.size());
+        assert!(near_zone(&card, HoverZone::Small).w <= window_max().w);
+    }
+
+    #[test]
+    fn letak_jendela_di_tepi_atas() {
+        let (left, width, w) = (-1920, 1920, 868);
+        assert_eq!(Placement::Center.window_x(left, width, w), -1920 + 526);
+        assert_eq!(Placement::Left.window_x(left, width, w), -1920);
+        assert_eq!(Placement::Right.window_x(left, width, w), -868);
+        for p in Placement::ALL {
+            assert_eq!(Placement::from_key(&p.key().to_uppercase()), Some(p));
+            let x = p.window_x(0, 2560, 900);
+            assert!(x >= 0 && x + 900 <= 2560, "{p:?}: jendela tetap di dalam layar");
+        }
+        assert_eq!(HoverZone::from_key("NORMAL"), Some(HoverZone::Normal));
+        assert_eq!(HoverZone::from_key("mini"), None);
     }
 
     #[test]

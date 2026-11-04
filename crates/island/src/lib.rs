@@ -17,7 +17,7 @@ use notchi_core::geom::{Point, Size, scale_for_dpi};
 use notchi_core::i18n::{Lang, Text, t};
 use notchi_core::icon::mascot_rgba;
 use notchi_core::island::{AlertKind, Behavior, Island, Presentation};
-use notchi_core::layout::{self, BUBBLE, BUBBLE_GAP, Button, Card, HOVER_SCALE, Shape};
+use notchi_core::layout::{self, BUBBLE, BUBBLE_GAP, Button, Card, HOVER_SCALE, HoverZone, Placement, Shape};
 use notchi_core::lyrics::{Lyrics, Query};
 use notchi_core::mascot::{Expression, MascotContext, expression_for};
 use notchi_core::media::{Artwork, Controls, MediaPresence, MediaSnapshot, SourceFilter, seek_target};
@@ -31,7 +31,8 @@ use notchi_platform_win::comp::{Animator, CompositionHost, CompositionSpriteShap
 use notchi_platform_win::gfx::Gfx;
 use notchi_platform_win::media::{MediaCommand, MediaService};
 use notchi_platform_win::window::{
-    Event, IconImage, MenuItem, MouseButton, OwnedWindow, TrayEvent, TrayIcon, UiProxy, Window, primary_monitor, quit,
+    Event, IconImage, MenuItem, Monitor, MouseButton, OwnedWindow, TrayEvent, TrayIcon, UiProxy, Window, primary_monitor,
+    quit,
 };
 use notchi_platform_win::{Result, comp, fswatch, net, now_ms, power, privacy, shell, sys};
 
@@ -76,7 +77,6 @@ const SWIPE_DP: f32 = 36.0;
 const HOUR_MS: Ms = 3_600_000;
 const PEEK_MS: Ms = 2_500;
 const RETRACT_DELAY_MS: u32 = 300;
-const REVEAL_DWELL_MS: u32 = 200;
 const COVER_SETTLE_MS: u32 = 150;
 const COLLAPSE_DELAY_MS: u32 = 1_500;
 const TRIM_DELAY_MS: u32 = 4_000;
@@ -261,6 +261,7 @@ pub struct IslandApp {
     wheel_acc: i32,
     inside: bool,
     reveal_pending: bool,
+    reveal_anchor: Option<Point>,
     esc_registered: bool,
     hotkey_ok: bool,
 }
@@ -395,6 +396,7 @@ impl IslandApp {
             wheel_acc: 0,
             inside: false,
             reveal_pending: false,
+            reveal_anchor: None,
             esc_registered: false,
             hotkey_ok: false,
             cfg: Config::default(),
@@ -482,7 +484,17 @@ impl IslandApp {
         self.update_tooltip();
         self.sync_settings();
         self.key = None;
-        if first || old.island.avoid_windows != self.cfg.island.avoid_windows {
+        if !first && old.island.position != self.cfg.island.position {
+            self.layout_window();
+        }
+        if !first && old.island.hover_zone != self.cfg.island.hover_zone {
+            self.settled_region = self.region_of(self.shape);
+            self.set_region(self.settled_region);
+        }
+        if first
+            || old.island.avoid_windows != self.cfg.island.avoid_windows
+            || old.island.position != self.cfg.island.position
+        {
             self.check_covered();
         }
     }
@@ -652,6 +664,7 @@ impl IslandApp {
             T_REVEAL => {
                 self.window.kill_timer(T_REVEAL);
                 self.reveal_pending = false;
+                self.reveal_anchor = None;
                 if self.inside {
                     self.reveal();
                 }
@@ -780,7 +793,8 @@ impl IslandApp {
     fn check_covered(&mut self) {
         let covered = self.cfg.island.avoid_windows && {
             let mon = primary_monitor();
-            let x = mon.left + mon.width() / 2;
+            let (wx, ww, _) = self.window_bounds(&mon);
+            let x = wx + ww / 2;
             let y = mon.top + (layout::PILL_H * self.ui.scale).round() as i32 - 1;
             self.window.app_beneath(x, y)
         };
@@ -821,9 +835,19 @@ impl IslandApp {
         if !self.island.is_hover() {
             if !self.retracted {
                 self.reveal();
-            } else if !self.reveal_pending {
-                self.reveal_pending = true;
-                self.window.set_timer(T_REVEAL, REVEAL_DWELL_MS);
+            } else {
+                let zone = self.cfg.island.hover_zone;
+                let moved = match (self.reveal_anchor, zone.rest_tolerance()) {
+                    (Some(a), Some(tol)) => (p.x - a.x).abs() > tol || (p.y - a.y).abs() > tol,
+                    _ => false,
+                };
+                if !self.reveal_pending || moved {
+                    // Zona kecil: hitungan diulang selama kursor masih bergerak, jadi kursor
+                    // yang melintas menuju tab browser tidak memunculkan Island.
+                    self.reveal_pending = true;
+                    self.reveal_anchor = Some(p);
+                    self.window.set_timer(T_REVEAL, zone.dwell_ms());
+                }
             }
         }
         if self.island.is_expanded() && !self.esc_registered {
@@ -854,6 +878,7 @@ impl IslandApp {
     fn on_mouse_leave(&mut self) {
         self.inside = false;
         self.reveal_pending = false;
+        self.reveal_anchor = None;
         self.window.kill_timer(T_REVEAL);
         if self.pointer.seek.is_some()
             && let Some(c) = self.content.as_mut()
@@ -1044,6 +1069,7 @@ impl IslandApp {
         if self.retracted && self.pointer.down.is_none() {
             if self.inside {
                 self.reveal_pending = false;
+                self.reveal_anchor = None;
                 self.window.kill_timer(T_REVEAL);
                 self.reveal();
             }
@@ -1328,6 +1354,8 @@ impl IslandApp {
             Setting::Liquid => self.persist("motion", "liquid", flag(on)),
             Setting::Fullscreen => self.persist("island", "hide_in_fullscreen", flag(on)),
             Setting::AvoidWindows => self.persist("island", "avoid_windows", flag(on)),
+            Setting::Position => self.persist("island", "position", &quoted(Placement::ALL[i.min(2)].key())),
+            Setting::HoverZone => self.persist("island", "hover_zone", &quoted(HoverZone::ALL[i.min(1)].key())),
             Setting::Style => self.persist("appearance", "style", &quoted(Style::ALL[i.min(2)].key())),
             Setting::Reduce => self.persist("motion", "reduce", &quoted(["system", "on", "off"][i.min(2)])),
             Setting::Mascot => self.persist("mascot", "enabled", flag(on)),
@@ -1798,7 +1826,7 @@ impl IslandApp {
     }
 
     fn region_of(&self, shape: Shape) -> Size {
-        let near = layout::near_zone(&self.full_shape);
+        let near = layout::near_zone(&self.full_shape, self.cfg.island.hover_zone);
         if self.retracted {
             near
         } else if self.island.tucks() {
@@ -1823,13 +1851,17 @@ impl IslandApp {
         self.window.set_region((self.window_px.0 - w) / 2, 0, w, h);
     }
 
-    fn layout_window(&mut self) {
-        let mon = primary_monitor();
+    fn window_bounds(&self, mon: &Monitor) -> (i32, i32, i32) {
         let size = layout::window_max();
         let w = (size.w * self.ui.scale).ceil() as i32;
         let h = (size.h * self.ui.scale).ceil() as i32;
         let w = w + (mon.width() - w).rem_euclid(2);
-        let x = mon.left + (mon.width() - w) / 2;
+        (self.cfg.island.position.window_x(mon.left, mon.width(), w), w, h)
+    }
+
+    fn layout_window(&mut self) {
+        let mon = primary_monitor();
+        let (x, w, h) = self.window_bounds(&mon);
         self.window_px = (w, h);
         self.window.set_bounds(x, mon.top, w, h, false);
         self.apply_region();
