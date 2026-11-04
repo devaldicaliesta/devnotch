@@ -20,7 +20,7 @@ Setiap tag `v*` memicu workflow [`release.yml`](.github/workflows/release.yml), 
 
 ## Gratis dan sumber terbuka
 
-- Kode: [MIT](LICENSE).
+- Kode: [Apache 2.0](LICENSE) (lihat juga [NOTICE](NOTICE)). Rilis hingga v0.5.0 berlisensi MIT.
 - Aset seni dan maskot: CC BY 4.0, lihat [`LICENSE-ASSETS.md`](LICENSE-ASSETS.md).
 - Nama dan logo: lihat [`TRADEMARKS.md`](TRADEMARKS.md).
 - Tanpa iklan, tanpa telemetri, tanpa fitur berbayar.

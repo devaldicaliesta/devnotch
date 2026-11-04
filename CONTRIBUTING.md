@@ -5,7 +5,7 @@ Terima kasih sudah tertarik. Proyek ini masih pada tahap perencanaan; baca [`doc
 ## Aturan dasar
 
 - **DCO, bukan CLA:** tanda tangani setiap commit dengan `git commit -s` (baris `Signed-off-by`).
-- **Lisensi:** kontribusi kode dilisensikan MIT; kontribusi aset seni CC BY 4.0.
+- **Lisensi:** kontribusi kode dilisensikan Apache 2.0 (inbound = outbound, sesuai pasal 5 lisensi); kontribusi aset seni CC BY 4.0.
 - **Kode `unsafe`:** hanya boleh berada di crate `platform-win`.
 - **Tanpa komentar:** kode ditulis tanpa komentar (`//`, `///`, `//!`); nama fungsi dan tipe harus cukup menjelaskan.
 - **Dependensi baru:** harus lolos `cargo deny` (hanya MIT, Apache-2.0, BSD, ISC, Unicode, OFL) dan dijelaskan alasannya di pull request.

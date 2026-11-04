@@ -167,10 +167,10 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::Id, NothingPlaying) => "Tidak ada yang diputar",
         (Lang::En, NothingPlaying) => "Nothing playing",
         (Lang::Id, AboutBody) => {
-            "Island interaktif bergaya macOS untuk Windows 11.\n\nGratis dan sumber terbuka (MIT). Maskot dan aset: CC BY 4.0.\nTidak berafiliasi dengan Apple, Microsoft, Google, atau OpenAI."
+            "Island interaktif bergaya macOS untuk Windows 11.\n\nGratis dan sumber terbuka (Apache 2.0). Maskot dan aset: CC BY 4.0.\nTidak berafiliasi dengan Apple, Microsoft, Google, atau OpenAI."
         }
         (Lang::En, AboutBody) => {
-            "A macOS-style interactive island for Windows 11.\n\nFree and open source (MIT). Mascot and assets: CC BY 4.0.\nNot affiliated with Apple, Microsoft, Google, or OpenAI."
+            "A macOS-style interactive island for Windows 11.\n\nFree and open source (Apache 2.0). Mascot and assets: CC BY 4.0.\nNot affiliated with Apple, Microsoft, Google, or OpenAI."
         }
         (Lang::Id, TrayTooltip) => "Notchi — klik untuk membuka Island",
         (Lang::En, TrayTooltip) => "Notchi — click to open the island",

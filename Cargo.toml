@@ -6,7 +6,7 @@ members = ["crates/core", "crates/platform-win", "crates/island", "crates/app"]
 version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
-license = "MIT"
+license = "Apache-2.0"
 authors = ["devaldicaliesta"]
 repository = "https://github.com/devaldicaliesta/devnotch"
 

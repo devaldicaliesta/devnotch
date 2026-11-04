@@ -62,7 +62,7 @@ jobs:
           $name = "Notchi-$env:TAG-windows-x64"
           New-Item -ItemType Directory -Force dist, "stage/$name" | Out-Null
           Copy-Item target/release/Notchi.exe "dist/$name.exe"
-          Copy-Item target/release/Notchi.exe, README.md, LICENSE, LICENSE-ASSETS.md, TRADEMARKS.md "stage/$name/"
+          Copy-Item target/release/Notchi.exe, README.md, LICENSE, NOTICE, LICENSE-ASSETS.md, TRADEMARKS.md "stage/$name/"
           Compress-Archive -Path "stage/$name" -DestinationPath "dist/$name.zip"
           Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
