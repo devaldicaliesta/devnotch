@@ -12,7 +12,7 @@ Produk ini adalah satu aplikasi Rust ringan untuk Windows 11 yang mengubah deskt
 | --- | --- | --- |
 | Prioritas | Island dikerjakan lebih dulu (Fase 1–2); Dock dan menu bar menyusul pada Fase 3 | 9.1 |
 | Sistem operasi | Hanya Windows 11 22H2 (build 22621) ke atas; Windows 10 tidak didukung | 6 |
-| Distribusi | Gratis, publik, sumber terbuka dengan lisensi MIT | 9.7 |
+| Distribusi | Gratis, publik, sumber terbuka dengan lisensi Apache 2.0 | 9.7 |
 | Notifikasi | Dikemas sebagai MSIX agar punya package identity | 3.2, 9.2 |
 | Media | Semua sumber yang tampil di kontrol media Windows, termasuk YouTube Music dan Apple Music | 3.6 |
 | Identitas visual | Maskot orisinal berkarakter ceria dengan palet sendiri | 2.6 |
@@ -656,16 +656,16 @@ Garis waktu tidak berskala; setiap fase berakhir pada gerbang yang kriterianya m
 1. Apakah nama "Notchi" sudah final? Perlu pengecekan merek dagang sebelum rilis publik di Store.
 2. Siapa pemilik akun Partner Center dan sertifikat penandatanganan (pribadi atau organisasi)?
 3. Siapa yang menggambar aset Notchi (sendiri, ilustrator, atau dibantu alat desain)? Palet di bagian 2.6 masih nilai awal.
-4. Apakah MIT sudah sesuai, atau lebih cocok Apache-2.0 (ada hibah paten) atau lisensi copyleft (menjaga turunan tetap terbuka)?
+4. ~~Apakah MIT sudah sesuai, atau lebih cocok Apache-2.0?~~ Diputuskan: Apache-2.0 sejak v0.6.0 (ada hibah paten).
 5. Hasil spike Fase 0 untuk YouTube Music dan Apple Music menentukan apakah perlu adaptor tambahan.
 
 ### 9.7 Lisensi dan tata kelola open source
 
-Notchi gratis dan sumber terbuka: kode berlisensi MIT, aset seni dan maskot berlisensi CC BY 4.0. Pilihan MIT dapat diganti sebelum rilis publik pertama, misalnya ke Apache-2.0 bila hibah paten dibutuhkan.
+Notchi gratis dan sumber terbuka: kode berlisensi Apache-2.0 (sejak v0.6.0; rilis sebelumnya MIT), aset seni dan maskot berlisensi CC BY 4.0.
 
 | Objek | Lisensi atau aturan | Catatan |
 | --- | --- | --- |
-| Kode sumber | MIT | Berkas `LICENSE` di akar repositori; "Copyright (c) 2026 devaldicaliesta" |
+| Kode sumber | Apache-2.0 | Berkas `LICENSE` dan `NOTICE` di akar repositori; "Copyright 2026 devaldicaliesta" |
 | Gambar maskot Notchi, ikon, tema | CC BY 4.0 | Wajib atribusi; nama "Notchi" dan logo tidak termasuk |
 | Nama "Notchi" dan logo | Di luar lisensi kode | Kebijakan merek di `TRADEMARKS.md`: fork dipersilakan tetapi memakai nama lain |
 | Dependensi | Hanya MIT, Apache-2.0, BSD, ISC, Unicode, dan OFL | Ditegakkan `cargo deny`; `THIRD_PARTY_LICENSES` dihasilkan otomatis |

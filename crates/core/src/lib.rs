@@ -17,6 +17,7 @@ pub mod mascot;
 pub mod media;
 pub mod power;
 pub mod privacy;
+pub mod shelf;
 pub mod spring;
 pub mod theme;
 pub mod timer;

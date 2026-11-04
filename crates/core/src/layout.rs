@@ -31,6 +31,7 @@ pub enum Card {
     Timer,
     Stopwatch,
     Download,
+    Shelf,
 }
 
 impl Card {
@@ -40,6 +41,7 @@ impl Card {
             Card::Media => 168.0,
             Card::Lyrics => 240.0,
             Card::Timer | Card::Stopwatch | Card::Download => 112.0,
+            Card::Shelf => 150.0,
         };
         h.clamp(EXPANDED_MIN_H, EXPANDED_MAX_H)
     }
@@ -270,6 +272,9 @@ pub enum Button {
     Lyrics,
     Mascot,
     OpenDownloads,
+    ShelfItem(u8),
+    ShelfAll,
+    ShelfClear,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -380,6 +385,67 @@ pub fn download_card() -> DownloadCard {
     }
 }
 
+/// Ubin berkas yang muat di kartu rak sekaligus.
+pub const SHELF_TILES: usize = 4;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShelfTile {
+    pub rect: Rect,
+    pub icon: Rect,
+    pub label: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShelfCard {
+    pub title: Rect,
+    pub drop: Rect,
+    pub tiles: Vec<ShelfTile>,
+    pub buttons: Vec<(Button, Rect)>,
+}
+
+/// Kartu rak berkas: judul dan tombol di atas, lalu satu baris ubin berkas.
+/// Bila berkasnya lebih dari [`SHELF_TILES`], ubin terakhir menjadi "+n" yang menyeret semua.
+pub fn shelf_card(items: usize) -> ShelfCard {
+    let w = EXPANDED_W;
+    let h = Card::Shelf.height();
+    let clear = Rect::new(w - PAD - 32.0, PAD - 4.0, 32.0, 28.0);
+    let all = Rect::new(clear.x - 8.0 - 104.0, PAD - 4.0, 104.0, 28.0);
+    let gap = 8.0;
+    let top = PAD + 32.0;
+    let tw = (w - 2.0 * PAD - gap * (SHELF_TILES as f32 - 1.0)) / SHELF_TILES as f32;
+    let th = h - top - PAD + 4.0;
+    let n = items.min(SHELF_TILES);
+    let tiles: Vec<ShelfTile> = (0..n)
+        .map(|i| {
+            let rect = Rect::new(PAD + i as f32 * (tw + gap), top, tw, th);
+            let s = 40.0;
+            ShelfTile {
+                rect,
+                icon: Rect::new(rect.x + (tw - s) / 2.0, rect.y + 6.0, s, s),
+                label: Rect::new(rect.x + 4.0, rect.y + 50.0, tw - 8.0, th - 54.0),
+            }
+        })
+        .collect();
+    let mut buttons: Vec<(Button, Rect)> = tiles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let more = items > SHELF_TILES && i == SHELF_TILES - 1;
+            (if more { Button::ShelfAll } else { Button::ShelfItem(i as u8) }, t.rect)
+        })
+        .collect();
+    if items > 0 {
+        buttons.push((Button::ShelfAll, all));
+        buttons.push((Button::ShelfClear, clear));
+    }
+    ShelfCard {
+        title: Rect::new(PAD + 2.0, PAD - 4.0, all.x - PAD - 10.0, 28.0),
+        drop: Rect::new(PAD, top, w - 2.0 * PAD, th),
+        tiles,
+        buttons,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HomeCard {
     pub mascot: Rect,
@@ -487,7 +553,7 @@ mod tests {
         assert_eq!(IDLE, Size::new(126.0, 37.0));
         assert_eq!(compact_size(10.0).w, 160.0);
         assert_eq!(compact_size(999.0).w, 240.0);
-        for c in [Card::Home, Card::Media, Card::Lyrics, Card::Timer, Card::Stopwatch, Card::Download] {
+        for c in [Card::Home, Card::Media, Card::Lyrics, Card::Timer, Card::Stopwatch, Card::Download, Card::Shelf] {
             let h = c.height();
             assert!((EXPANDED_MIN_H..=EXPANDED_MAX_H).contains(&h), "{c:?}");
         }
@@ -649,6 +715,22 @@ mod tests {
             }
             let (_, lb) = mc.buttons.iter().find(|(b, _)| *b == Button::Lyrics).unwrap();
             assert!(mc.title.x + mc.title.w <= lb.x, "judul tidak menabrak tombol lirik");
+        }
+        for n in [0, 1, 4, 9] {
+            let sc = shelf_card(n);
+            assert_eq!(sc.tiles.len(), n.min(SHELF_TILES));
+            assert!(inside(Card::Shelf.size(), &sc.drop) && inside(Card::Shelf.size(), &sc.title));
+            for t in &sc.tiles {
+                assert!(inside(Card::Shelf.size(), &t.rect), "{t:?}");
+                assert!(t.icon.x >= t.rect.x && t.icon.x + t.icon.w <= t.rect.x + t.rect.w);
+                assert!(t.label.y >= t.icon.y + t.icon.h && t.label.y + t.label.h <= t.rect.y + t.rect.h + 0.01);
+            }
+            for (_, r) in &sc.buttons {
+                assert!(inside(Card::Shelf.size(), r), "{r:?}");
+            }
+            assert_eq!(sc.buttons.iter().any(|(b, _)| *b == Button::ShelfClear), n > 0);
+            let more = sc.buttons.iter().filter(|(b, _)| *b == Button::ShelfAll).count();
+            assert_eq!(more, if n > SHELF_TILES { 2 } else if n > 0 { 1 } else { 0 });
         }
         let dc = download_card();
         for r in [dc.icon, dc.title, dc.subtitle, dc.bar] {

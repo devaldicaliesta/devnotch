@@ -14,6 +14,7 @@ pub enum ActivityKind {
     Stopwatch,
     Media,
     Download,
+    Shelf,
 }
 
 impl ActivityKind {
@@ -22,7 +23,7 @@ impl ActivityKind {
             ActivityKind::Privacy => Priority::P0,
             ActivityKind::Timer | ActivityKind::Stopwatch => Priority::P2,
             ActivityKind::Media => Priority::P3,
-            ActivityKind::Download => Priority::P4,
+            ActivityKind::Download | ActivityKind::Shelf => Priority::P4,
         }
     }
 }

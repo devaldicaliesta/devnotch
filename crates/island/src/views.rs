@@ -3,6 +3,8 @@ use notchi_core::color::{self, Color, Skin};
 use notchi_core::fmt::{countdown, elapsed};
 use notchi_core::geom::{Rect, Size};
 use notchi_core::bluetooth::DeviceKind;
+use notchi_core::shelf::Item as ShelfItem;
+use std::path::PathBuf;
 use notchi_core::i18n::{self, Lang, Text, long_date, short_date, t};
 use notchi_core::island::AlertKind;
 use notchi_core::layout::{self, BATTERY_BADGE, Button};
@@ -41,6 +43,9 @@ pub const G_MOUSE: &str = "\u{E962}";
 pub const G_KEYBOARD: &str = "\u{E765}";
 pub const G_PHONE: &str = "\u{E8EA}";
 pub const G_GAME: &str = "\u{E7FC}";
+pub const G_SHELF: &str = "\u{E7B8}";
+pub const G_FILE: &str = "\u{E8A5}";
+pub const G_DELETE: &str = "\u{E74D}";
 
 const LOW_BATTERY: u8 = 20;
 const KNOB: f32 = 12.0;
@@ -51,6 +56,7 @@ pub enum Slot {
     Timer,
     Stopwatch,
     Download,
+    Shelf,
 }
 
 /// Ringkasan unduhan yang sedang berjalan untuk ditampilkan.
@@ -86,6 +92,9 @@ pub struct Model<'a> {
     pub lyrics: Option<LyricState<'a>>,
     pub battery: Option<PowerReading>,
     pub download: Option<&'a DownloadInfo>,
+    pub shelf: &'a [ShelfItem],
+    pub shelf_icons: &'a [(PathBuf, Option<Artwork>)],
+    pub shelf_hover: bool,
 }
 
 #[derive(Debug)]
@@ -167,7 +176,7 @@ pub fn stopwatch_text(s: &Stopwatch, now: Ms) -> String {
 fn compact_width(slot: Slot) -> f32 {
     match slot {
         Slot::Media => 200.0,
-        Slot::Timer | Slot::Stopwatch | Slot::Download => 180.0,
+        Slot::Timer | Slot::Stopwatch | Slot::Download | Slot::Shelf => 180.0,
     }
 }
 
@@ -180,9 +189,10 @@ fn left_icon(ui: &Ui, parent: &ContainerVisual, rect: Rect, slot: Slot, m: &Mode
         (Slot::Media, Some(art)) => {
             ui.image(parent, art, rect, 6.0)?;
         }
-        (Slot::Download, _) => {
+        (Slot::Download | Slot::Shelf, _) => {
+            let glyph = if slot == Slot::Download { G_DOWNLOAD } else { G_SHELF };
             let style = TextStyle::new(rect.h * 0.62, Weight::Regular, ui.pal.ink(ui.accent)).icon().centered();
-            ui.text(parent, G_DOWNLOAD, style, rect, Align::Center)?;
+            ui.text(parent, glyph, style, rect, Align::Center)?;
         }
         _ if m.mascot_on => {
             d.mascot(mascot(ui, parent, rect, m.skin, m.expression)?, false);
@@ -218,6 +228,10 @@ pub fn build_compact(ui: &Ui, parent: &ContainerVisual, slot: Slot, size: Size, 
                 d.stopwatch = Some(ui.text(parent, &stopwatch_text(sw, m.now), style, text_rect, Align::Right)?);
             }
         }
+        Slot::Shelf => {
+            let style = TextStyle::new(14.0, Weight::Semibold, ui.pal.text).tabular();
+            ui.text(parent, &shelf_count(m.lang, m.shelf.len()), style, text_rect, Align::Right)?;
+        }
         Slot::Download => {
             if let Some(dl) = m.download {
                 let style = TextStyle::new(14.0, Weight::Semibold, ui.pal.text).tabular();
@@ -244,6 +258,89 @@ pub fn download_detail(lang: Lang, dl: &DownloadInfo) -> String {
         s = format!("{s} · +{} {}", dl.count - 1, t(lang, Text::DownloadsMore));
     }
     s
+}
+
+pub fn shelf_count(lang: Lang, n: usize) -> String {
+    format!("{n} {}", t(lang, Text::ShelfFiles))
+}
+
+pub fn build_shelf_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
+    let n = m.shelf.len();
+    let lay = layout::shelf_card(if m.shelf_hover { 0 } else { n });
+    let title = if n == 0 { t(m.lang, Text::ShelfTitle).to_string() } else { format!("{} · {n}", t(m.lang, Text::ShelfTitle)) };
+    ui.text(parent, &title, TextStyle::new(15.0, Weight::Semibold, ui.pal.text), lay.title, Align::Left)?;
+
+    if m.shelf_hover || n == 0 {
+        // Zona lepas: tampil saat berkas sedang diseret di atas Island, atau saat rak kosong.
+        ui.surface(parent, lay.drop, 14.0, false, ui.pal.well)?;
+        let ring_color = if m.shelf_hover { ui.pal.ink(ui.accent) } else { white(ui, 0.25) };
+        let ring = ui.c.CreateShapeVisual()?;
+        ring.SetSize(v2(lay.drop.w, lay.drop.h))?;
+        ring.SetOffset(v3(lay.drop.x, lay.drop.y, 0.0))?;
+        let g = ui.c.CreateRoundedRectangleGeometry()?;
+        g.SetOffset(v2(1.0, 1.0))?;
+        g.SetSize(v2(lay.drop.w - 2.0, lay.drop.h - 2.0))?;
+        g.SetCornerRadius(v2(13.0, 13.0))?;
+        let shape = ui.c.CreateSpriteShapeWithGeometry(&g)?;
+        shape.SetStrokeBrush(&ui.c.CreateColorBrushWithColor(notchi_platform_win::comp::color(ring_color))?)?;
+        shape.SetStrokeThickness(1.5)?;
+        shape.StrokeDashArray()?.Append(4.0)?;
+        ring.Shapes()?.Append(&shape)?;
+        parent.Children()?.InsertAtTop(&ring)?;
+        let icon = Rect::new(lay.drop.x, lay.drop.y + 10.0, lay.drop.w, 26.0);
+        let style = TextStyle::new(20.0, Weight::Regular, ui.pal.ink(ui.accent)).icon().centered();
+        ui.text(parent, G_SHELF, style, icon, Align::Center)?;
+        let hint = Rect::new(lay.drop.x, icon.y + 30.0, lay.drop.w, 20.0);
+        let style = TextStyle::new(13.0, Weight::Medium, ui.pal.text_dim).centered();
+        ui.text(parent, t(m.lang, Text::ShelfDrop), style, hint, Align::Center)?;
+        return Ok(());
+    }
+
+    let more = n > layout::SHELF_TILES;
+    for (i, tile) in lay.tiles.iter().enumerate() {
+        ui.surface(parent, tile.rect, 12.0, false, ui.pal.well)?;
+        let host = ui.container(parent)?;
+        host.SetOffset(v3(tile.rect.x, tile.rect.y, 0.0))?;
+        host.SetSize(v2(tile.rect.w, tile.rect.h))?;
+        host.SetCenterPoint(v3(tile.rect.w / 2.0, tile.rect.h / 2.0, 0.0))?;
+        let local = |r: Rect| Rect::new(r.x - tile.rect.x, r.y - tile.rect.y, r.w, r.h);
+        if more && i == layout::SHELF_TILES - 1 {
+            let rest = n - (layout::SHELF_TILES - 1);
+            let style = TextStyle::new(20.0, Weight::Semibold, ui.pal.text).centered();
+            ui.text(&host, &format!("+{rest}"), style, local(tile.icon), Align::Center)?;
+            let style = TextStyle::new(11.0, Weight::Medium, ui.pal.text_dim).centered().wrap(2);
+            ui.text(&host, t(m.lang, Text::ShelfAll), style, local(tile.label), Align::Center)?;
+            d.add(Button::ShelfAll, tile.rect, host);
+            continue;
+        }
+        let item = &m.shelf[i];
+        match m.shelf_icons.iter().find(|(p, _)| *p == item.path).and_then(|(_, a)| a.as_ref()) {
+            Some(art) => {
+                ui.image(&host, art, local(tile.icon), 4.0)?;
+            }
+            None => {
+                let style = TextStyle::new(26.0, Weight::Regular, ui.pal.ink(ui.accent)).icon().centered();
+                ui.text(&host, G_FILE, style, local(tile.icon), Align::Center)?;
+            }
+        }
+        let style = TextStyle::new(11.0, Weight::Medium, ui.pal.text).centered().wrap(2);
+        ui.text(&host, &item.name, style, local(tile.label), Align::Center)?;
+        d.add(Button::ShelfItem(i as u8), tile.rect, host);
+    }
+    for (b, r) in &lay.buttons {
+        match b {
+            Button::ShelfAll if r.h < 40.0 => {
+                let host = ui.button(parent, *r, t(m.lang, Text::ShelfAll), false, Tone::Neutral)?;
+                d.add(*b, *r, host);
+            }
+            Button::ShelfClear => {
+                let host = ui.button(parent, *r, G_DELETE, true, Tone::Neutral)?;
+                d.add(*b, *r, host);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn build_download_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
@@ -295,6 +392,7 @@ pub fn build_bubble(ui: &Ui, parent: &ContainerVisual, slot: Slot, m: &Model<'_>
                 Slot::Timer => (G_STOPWATCH, timer_color(ui)),
                 Slot::Stopwatch => (G_STOPWATCH, ui.pal.text),
                 Slot::Download => (G_DOWNLOAD, ui.pal.ink(ui.accent)),
+                Slot::Shelf => (G_SHELF, ui.pal.ink(ui.accent)),
             };
             let style = TextStyle::new(15.0, Weight::Regular, c).icon().centered();
             ui.text(parent, glyph, style, r, Align::Center)?;

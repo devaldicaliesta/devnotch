@@ -113,6 +113,11 @@ pub enum Text {
     BtDisconnected,
     BtCard,
     BtDesc,
+    ShelfTitle,
+    ShelfDrop,
+    ShelfFiles,
+    ShelfAll,
+    ShelfDesc,
 }
 
 pub fn t(lang: Lang, key: Text) -> &'static str {
@@ -167,10 +172,10 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::Id, NothingPlaying) => "Tidak ada yang diputar",
         (Lang::En, NothingPlaying) => "Nothing playing",
         (Lang::Id, AboutBody) => {
-            "Island interaktif bergaya macOS untuk Windows 11.\n\nGratis dan sumber terbuka (MIT). Maskot dan aset: CC BY 4.0.\nTidak berafiliasi dengan Apple, Microsoft, Google, atau OpenAI."
+            "Island interaktif bergaya macOS untuk Windows 11.\n\nGratis dan sumber terbuka (Apache 2.0). Maskot dan aset: CC BY 4.0.\nTidak berafiliasi dengan Apple, Microsoft, Google, atau OpenAI."
         }
         (Lang::En, AboutBody) => {
-            "A macOS-style interactive island for Windows 11.\n\nFree and open source (MIT). Mascot and assets: CC BY 4.0.\nNot affiliated with Apple, Microsoft, Google, or OpenAI."
+            "A macOS-style interactive island for Windows 11.\n\nFree and open source (Apache 2.0). Mascot and assets: CC BY 4.0.\nNot affiliated with Apple, Microsoft, Google, or OpenAI."
         }
         (Lang::Id, TrayTooltip) => "Notchi — klik untuk membuka Island",
         (Lang::En, TrayTooltip) => "Notchi — click to open the island",
@@ -314,6 +319,16 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, BtCard) => "Bluetooth devices",
         (Lang::Id, BtDesc) => "Alert saat tersambung atau terputus, dengan baterai",
         (Lang::En, BtDesc) => "Alert on connect or disconnect, with battery",
+        (Lang::Id, ShelfTitle) => "Rak berkas",
+        (Lang::En, ShelfTitle) => "File shelf",
+        (Lang::Id, ShelfDrop) => "Lepas berkas di sini",
+        (Lang::En, ShelfDrop) => "Drop files here",
+        (Lang::Id, ShelfFiles) => "berkas",
+        (Lang::En, ShelfFiles) => "files",
+        (Lang::Id, ShelfAll) => "Seret semua",
+        (Lang::En, ShelfAll) => "Drag all",
+        (Lang::Id, ShelfDesc) => "Seret berkas ke tepi atas untuk disimpan sementara",
+        (Lang::En, ShelfDesc) => "Drag files to the top edge to hold them for later",
     }
 }
 

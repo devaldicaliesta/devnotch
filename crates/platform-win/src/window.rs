@@ -12,7 +12,7 @@ use notchi_core::privacy::Privacy;
 use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_CLOAKED, DWMWA_EXCLUDED_FROM_PEEK, DWMWA_EXTENDED_FRAME_BOUNDS,
-    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_USE_HOSTBACKDROPBRUSH, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
     DwmGetWindowAttribute, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -114,6 +114,9 @@ pub enum Event {
     BluetoothRemoved(String),
     BluetoothReady,
     Brightness(Option<u8>),
+    /// Berkas sedang diseret di atas Island (true) atau sudah keluar/dilepas (false).
+    ShelfDrag(bool),
+    ShelfDrop(Vec<std::path::PathBuf>),
     User(u64),
     Close,
     Key(u32),
@@ -377,6 +380,8 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
         let yes = BOOL(1);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &yes as *const _ as *const c_void, 4);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_EXCLUDED_FROM_PEEK, &yes as *const _ as *const c_void, 4);
+        // Izinkan brush host backdrop (blur acrylic dari isi di belakang jendela) untuk gaya Kaca.
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_HOSTBACKDROPBRUSH, &yes as *const _ as *const c_void, 4);
 
         let state = Box::new(WindowState {
             handler: RefCell::new(None),
@@ -705,6 +710,18 @@ unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
 }
 
 impl Window {
+    /// Terima berkas yang diseret dan dilepas di jendela ini (rak berkas).
+    pub fn accept_file_drops(&self, proxy: UiProxy) -> bool {
+        crate::dragdrop::register(self.hwnd, proxy)
+    }
+
+    /// Lepaskan tangkapan mouse, misalnya sebelum loop seret OLE mengambil alih.
+    pub fn release_capture(&self) {
+        unsafe {
+            let _ = ReleaseCapture();
+        }
+    }
+
     /// Samakan bilah judul dengan tema (gelap/terang) jendela panel.
     pub fn set_caption(&self, caption: Color, dark: bool) {
         set_caption(self.hwnd, caption, dark);

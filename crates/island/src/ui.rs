@@ -250,6 +250,11 @@ pub struct Pill {
     flares: [SpriteVisual; 2],
     shape: CompositionSpriteShape,
     fill: Color,
+    /// Blur acrylic: isi di belakang jendela (host backdrop) lalu lapisan warna di atasnya,
+    /// keduanya dipotong mengikuti bentuk pil. Disembunyikan bila tidak dipakai.
+    backdrop: SpriteVisual,
+    tint: SpriteVisual,
+    blur: bool,
 }
 
 const OVERLAP: f32 = 1.0;
@@ -281,6 +286,17 @@ impl Pill {
         shape.SetFillBrush(&ui.c.CreateColorBrushWithColor(color(fill))?)?;
         visual.Shapes()?.Append(&shape)?;
 
+        let layer = |ui: &Ui| -> Result<SpriteVisual> {
+            let v = ui.c.CreateSpriteVisual()?;
+            v.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
+            v.SetClip(&ui.c.CreateGeometricClipWithGeometry(&attached(ui)?)?)?;
+            v.SetIsVisible(false)?;
+            visual.Children()?.InsertAtTop(&v)?;
+            Ok(v)
+        };
+        let backdrop = layer(ui)?;
+        let tint = layer(ui)?;
+
         let content = ui.c.CreateContainerVisual()?;
         content.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
         content.SetClip(&ui.c.CreateGeometricClipWithGeometry(&attached(ui)?)?)?;
@@ -298,12 +314,33 @@ impl Pill {
             ui.anim.bind(flare, "Scale", &format!("Vector3({grow}, {grow}, 1)"), &refs)?;
             ui.anim.bind(flare, "Opacity", "host.Opacity", &refs)?;
         }
-        Ok(Pill { visual, content, flares, shape, fill })
+        Ok(Pill { visual, content, flares, shape, fill, backdrop, tint, blur: false })
     }
 
     pub fn set_fill(&mut self, ui: &Ui, fill: Color) -> Result<()> {
         self.fill = fill;
-        self.shape.SetFillBrush(&ui.c.CreateColorBrushWithColor(color(fill))?)
+        if self.blur {
+            self.tint.SetBrush(&ui.c.CreateColorBrushWithColor(color(fill))?)?;
+            let clear = Color::rgb(0).with_alpha(0);
+            self.shape.SetFillBrush(&ui.c.CreateColorBrushWithColor(color(clear))?)
+        } else {
+            self.shape.SetFillBrush(&ui.c.CreateColorBrushWithColor(color(fill))?)
+        }
+    }
+
+    /// Nyalakan atau matikan blur acrylic. `fill` adalah warna tint di atas blur (atau isi
+    /// biasa saat blur mati).
+    pub fn set_blur(&mut self, ui: &Ui, on: bool, fill: Color) -> Result<()> {
+        if on && !self.blur {
+            self.backdrop.SetBrush(&ui.c.CreateHostBackdropBrush()?)?;
+        }
+        self.blur = on;
+        self.backdrop.SetIsVisible(on)?;
+        self.tint.SetIsVisible(on)?;
+        if !on {
+            self.backdrop.SetBrush(None)?;
+        }
+        self.set_fill(ui, fill)
     }
 
     pub fn set_liquid(&self, ui: &Ui, on: bool) -> Result<()> {

@@ -51,6 +51,11 @@ pub struct DownloadsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ShelfConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct BluetoothConfig {
     pub enabled: bool,
 }
@@ -73,11 +78,14 @@ pub struct Config {
     pub island: IslandConfig,
     pub style: Style,
     pub theme: Theme,
+    /// Blur acrylic sungguhan untuk gaya Kaca (bila efek transparansi Windows aktif).
+    pub blur: bool,
     pub mascot: MascotConfig,
     pub media: MediaConfig,
     pub power: PowerConfig,
     pub downloads: DownloadsConfig,
     pub bluetooth: BluetoothConfig,
+    pub shelf: ShelfConfig,
     pub timer: TimerConfig,
     pub reduce_motion: ReduceMotion,
     pub liquid: bool,
@@ -101,6 +109,7 @@ impl Default for Config {
             },
             style: Style::Neumorphism,
             theme: Theme::System,
+            blur: true,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
             media: MediaConfig {
                 enabled: true,
@@ -114,6 +123,7 @@ impl Default for Config {
             power: PowerConfig { enabled: true, low_thresholds: vec![20, 10] },
             downloads: DownloadsConfig { enabled: true },
             bluetooth: BluetoothConfig { enabled: true },
+            shelf: ShelfConfig { enabled: true },
             timer: TimerConfig { presets_minutes: vec![1, 5, 10, 25], sound: true },
             reduce_motion: ReduceMotion::System,
             liquid: true,
@@ -162,6 +172,9 @@ style = "neumorphism"
 # Tema warna: "system" mengikuti Windows (mode aplikasi terang/gelap),
 # "dark" selalu gelap, "light" selalu terang.
 theme = "system"
+# Gaya "glass" memakai blur acrylic dari isi di belakang pil, seperti macOS. Butuh
+# "Efek transparansi" Windows aktif; tanpanya, atau bila false, pil cukup tembus pandang.
+blur = true
 
 [mascot]
 enabled = true
@@ -197,6 +210,11 @@ enabled = true
 
 [bluetooth]
 # Alert saat perangkat Bluetooth tersambung atau terputus, beserta baterainya bila dilaporkan.
+enabled = true
+
+[shelf]
+# Rak berkas: seret berkas ke tepi atas (Island) untuk disimpan sementara, lalu seret keluar
+# ke folder atau aplikasi lain. Hanya jalurnya yang disimpan; berkas tidak disalin.
 enabled = true
 
 [timer]
@@ -364,11 +382,12 @@ pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
 
 const KNOWN: &[(&str, &[&str])] = &[
     ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "x", "position", "hover_zone", "side_mascot", "mode", "autohide", "top_margin"]),
-    ("appearance", &["style", "theme"]),
+    ("appearance", &["style", "theme", "blur"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "scroll_brightness", "paused_linger_seconds", "lyrics"]),
     ("downloads", &["enabled"]),
     ("bluetooth", &["enabled"]),
+    ("shelf", &["enabled"]),
     ("power", &["enabled", "low_thresholds"]),
     ("timer", &["presets_minutes", "sound"]),
     ("motion", &["reduce", "liquid"]),
@@ -450,6 +469,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let style = r.parsed("appearance.style", d.style, |s| {
         Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", \"glass\", atau \"classic\"".into())
     });
+    let blur = r.bool("appearance.blur", d.blur);
     let theme = r.parsed("appearance.theme", d.theme, |s| {
         Theme::from_key(s).ok_or("harus \"system\", \"dark\", atau \"light\"".into())
     });
@@ -464,6 +484,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let scroll_brightness = r.bool("media.scroll_brightness", d.media.scroll_brightness);
     let downloads_enabled = r.bool("downloads.enabled", d.downloads.enabled);
     let bluetooth_enabled = r.bool("bluetooth.enabled", d.bluetooth.enabled);
+    let shelf_enabled = r.bool("shelf.enabled", d.shelf.enabled);
     let linger = r.int("media.paused_linger_seconds", 0, 3600, d.media.paused_linger_seconds as i64) as u32;
     let lyrics = r.bool("media.lyrics", d.media.lyrics);
 
@@ -492,10 +513,12 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows, x, hover_zone, side_mascot },
         style,
         theme,
+        blur,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, scroll_brightness, paused_linger_seconds: linger, lyrics },
         downloads: DownloadsConfig { enabled: downloads_enabled },
         bluetooth: BluetoothConfig { enabled: bluetooth_enabled },
+        shelf: ShelfConfig { enabled: shelf_enabled },
         power: PowerConfig { enabled: power_enabled, low_thresholds: thresholds.into_iter().map(|t| t as u8).collect() },
         timer: TimerConfig { presets_minutes: presets.into_iter().map(|t| t as u32).collect(), sound },
         reduce_motion,

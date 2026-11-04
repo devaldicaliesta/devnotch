@@ -1,6 +1,6 @@
 # Kebijakan nama dan logo
 
-Kode Notchi berlisensi MIT dan gambar maskotnya berlisensi CC BY 4.0, tetapi nama "Notchi" sebagai nama produk dan logo proyek tidak termasuk dalam kedua lisensi itu.
+Kode Notchi berlisensi Apache 2.0 dan gambar maskotnya berlisensi CC BY 4.0, tetapi nama "Notchi" sebagai nama produk dan logo proyek tidak termasuk dalam kedua lisensi itu.
 
 - Anda boleh membuat fork, memodifikasi, dan mendistribusikan ulang kode.
 - Jika hasilnya berbeda secara berarti dari rilis resmi, gunakan nama dan logo lain.
