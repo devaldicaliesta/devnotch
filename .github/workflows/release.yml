@@ -73,13 +73,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # API GitHub kadang membalas 5xx sesaat; ulangi dengan jeda 2, 4, 8, 16 detik.
+          # Bila rilis sudah sempat dibuat sebagian, percobaan berikutnya mengunggah ulang aset.
           $assets = (Get-ChildItem dist -File).FullName
-          gh release view $env:TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG @assets --clobber
-          } else {
-            $notes = "docs/rilis/$env:TAG.md"
-            $body = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
-            gh release create $env:TAG @assets --title "Notchi $env:TAG" --target $env:GITHUB_SHA @body
+          $notes = "docs/rilis/$env:TAG.md"
+          $body = if (Test-Path $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+          for ($i = 0; $i -lt 5; $i++) {
+            if ($i -gt 0) {
+              $wait = [math]::Pow(2, $i)
+              Write-Host "Percobaan ulang $i dalam $wait detik"
+              Start-Sleep -Seconds $wait
+            }
+            gh release view $env:TAG *> $null
+            if ($LASTEXITCODE -eq 0) {
+              gh release upload $env:TAG @assets --clobber
+            } else {
+              gh release create $env:TAG @assets --title "Notchi $env:TAG" --target $env:GITHUB_SHA @body
+            }
+            if ($LASTEXITCODE -eq 0) { exit 0 }
           }
-          exit $LASTEXITCODE
+          exit 1
