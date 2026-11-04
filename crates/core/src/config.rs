@@ -123,7 +123,8 @@ behavior = "autohide"
 hotkey = "Ctrl+Alt+N"
 hide_in_fullscreen = true
 # Saat jendela aplikasi (misalnya browser yang di-maximize) berada tepat di
-# bawah notch, Island masuk ke tepi atas agar tab dan bilah judul tidak tertutup.
+# bawah Island, Island masuk ke tepi atas agar tab dan bilah judul tidak tertutup.
+# Tidak berlaku untuk behavior = "sticky", yang selalu tampil.
 avoid_windows = true
 # Letak pil di tepi atas, sebagai pecahan lebar layar: 0 = kiri, 0.5 = tengah
 # (di notch), 1 = kanan. Seret pil ke kiri atau kanan untuk mengubahnya.
