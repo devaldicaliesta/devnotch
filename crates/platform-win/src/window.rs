@@ -42,7 +42,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
     SetWindowPos, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
     ICON_BIG, ICON_SMALL, IsIconic, SW_RESTORE, SW_SHOW, SWP_NOZORDER, SendMessageW, WM_CLOSE, WM_KEYDOWN, WM_SETICON,
-    WS_CAPTION, WS_EX_APPWINDOW, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
+    WS_CAPTION, WS_EX_APPWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
+    GetClientRect, MINMAXINFO, WM_GETMINMAXINFO, WM_SIZE, SIZE_MINIMIZED,
+    WINDOW_EX_STYLE, WINDOW_STYLE,
     WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE,
     WM_DPICHANGED, WM_HOTKEY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEACTIVATE,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NULL, WM_POWERBROADCAST, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETTINGCHANGE,
@@ -90,6 +92,7 @@ pub enum Event {
     Timer(usize),
     Hotkey(i32),
     DpiChanged(u32),
+    Resized,
     DisplayChanged,
     SettingsChanged,
     PowerChanged,
@@ -215,6 +218,25 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             return LRESULT(0);
         }
         WM_KEYDOWN => send(Event::Key(wparam.0 as u32)),
+        WM_SIZE if state.panel => {
+            if wparam.0 as u32 != SIZE_MINIMIZED {
+                send(Event::Resized);
+            }
+        }
+        WM_GETMINMAXINFO if state.panel => {
+            let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+            let scale = scale_for_dpi(dpi);
+            let mut r = RECT {
+                left: 0,
+                top: 0,
+                right: (PANEL_MIN_DP.0 * scale).ceil() as i32,
+                bottom: (PANEL_MIN_DP.1 * scale).ceil() as i32,
+            };
+            let _ = unsafe { AdjustWindowRectExForDpi(&mut r, PANEL_STYLE, false, PANEL_EX, dpi) };
+            let info = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+            info.ptMinTrackSize = POINT { x: r.right - r.left, y: r.bottom - r.top };
+            return LRESULT(0);
+        }
         WM_MOUSEMOVE => {
             if !state.tracking_mouse.replace(true) {
                 let mut tme = TRACKMOUSEEVENT {
@@ -365,6 +387,13 @@ fn colorref(c: Color) -> u32 {
     c.r as u32 | (c.g as u32) << 8 | (c.b as u32) << 16
 }
 
+/// Ukuran klien terkecil jendela panel (dp) saat diubah ukurannya.
+pub const PANEL_MIN_DP: (f32, f32) = (360.0, 320.0);
+const PANEL_STYLE: WINDOW_STYLE = WINDOW_STYLE(
+    WS_OVERLAPPED.0 | WS_CAPTION.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0 | WS_THICKFRAME.0,
+);
+const PANEL_EX: WINDOW_EX_STYLE = WINDOW_EX_STYLE(WS_EX_APPWINDOW.0 | WS_EX_NOREDIRECTIONBITMAP.0);
+
 pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, icon: &IconImage) -> Result<OwnedWindow> {
     let class = wide(PANEL_CLASS);
     let title = wide(title);
@@ -386,12 +415,13 @@ pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, icon: &I
         let _ = GetDpiForMonitor(hmon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
         let dpi = dx.max(96);
         let scale = scale_for_dpi(dpi);
-        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-        let ex = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP;
+        let (style, ex) = (PANEL_STYLE, PANEL_EX);
         let mut r = RECT { left: 0, top: 0, right: (client_dp.0 * scale).ceil() as i32, bottom: (client_dp.1 * scale).ceil() as i32 };
         let _ = AdjustWindowRectExForDpi(&mut r, style, false, ex, dpi);
-        let (w, h) = (r.right - r.left, r.bottom - r.top);
         let work = info.rcWork;
+        // Jangan lebih besar dari area kerja; isi yang tidak muat bisa di-scroll.
+        let w = (r.right - r.left).min(work.right - work.left);
+        let h = (r.bottom - r.top).min(work.bottom - work.top);
         let x = work.left + ((work.right - work.left) - w).max(0) / 2;
         let y = work.top + ((work.bottom - work.top) - h).max(0) / 2;
         let hwnd = CreateWindowExW(ex, PCWSTR(class.as_ptr()), PCWSTR(title.as_ptr()), style, x, y, w, h, None, None, Some(instance), None)?;
@@ -657,6 +687,13 @@ unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
 }
 
 impl Window {
+    /// Ukuran area klien dalam piksel.
+    pub fn client_px(&self) -> (i32, i32) {
+        let mut r = RECT::default();
+        let _ = unsafe { GetClientRect(self.hwnd, &mut r) };
+        (r.right - r.left, r.bottom - r.top)
+    }
+
     pub fn dpi(&self) -> u32 {
         unsafe { GetDpiForWindow(self.hwnd) }.max(96)
     }
@@ -853,6 +890,11 @@ impl Monitor {
     pub fn width(&self) -> i32 {
         self.right - self.left
     }
+}
+
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    let mut pt = POINT::default();
+    unsafe { GetCursorPos(&mut pt) }.ok().map(|_| (pt.x, pt.y))
 }
 
 pub fn primary_monitor() -> Monitor {

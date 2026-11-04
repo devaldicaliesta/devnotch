@@ -13,6 +13,9 @@ pub const EXPANDED_MAX_H: f32 = 240.0;
 pub const HUD: Size = Size::new(200.0, 37.0);
 pub const PEEK_IDLE: Size = Size::new(252.0, 37.0);
 pub const PEEK_MEDIA: Size = Size::new(300.0, 37.0);
+/// Pil kecil berisi maskot saat Island berada di samping dan tidak ada aktivitas.
+pub const BUDDY: Size = Size::new(64.0, 37.0);
+pub const BUDDY_MASCOT: f32 = 27.0;
 pub const SEEK_PAD_Y: f32 = 8.0;
 pub const SEEK_PAD_X: f32 = 6.0;
 pub const HOVER_SCALE: f32 = 1.05;
@@ -177,15 +180,50 @@ impl Placement {
         Self::ALL.into_iter().find(|p| p.key().eq_ignore_ascii_case(key))
     }
 
-    /// Posisi kiri jendela Island (piksel). Di kiri/kanan jendela menempel ke tepi layar,
-    /// sehingga kartu terlebar tetap muat dan pil kecil duduk agak menjauh dari sudut.
-    pub fn window_x(self, mon_left: i32, mon_width: i32, window_w: i32) -> i32 {
+    /// Titik tengah pil sebagai pecahan lebar layar (0 = kiri, 1 = kanan).
+    pub fn x(self) -> f32 {
         match self {
-            Placement::Center => mon_left + (mon_width - window_w) / 2,
-            Placement::Left => mon_left,
-            Placement::Right => mon_left + mon_width - window_w,
+            Placement::Center => 0.5,
+            Placement::Left => 0.0,
+            Placement::Right => 1.0,
         }
     }
+
+    /// Preset terdekat untuk posisi hasil drag.
+    pub fn nearest(x: f32) -> Placement {
+        if x < SIDE_LEFT {
+            Placement::Left
+        } else if x > 1.0 - SIDE_LEFT {
+            Placement::Right
+        } else {
+            Placement::Center
+        }
+    }
+}
+
+const SIDE_LEFT: f32 = 0.3;
+
+/// Pil dianggap berada "di samping" (jauh dari notch) bila titik tengahnya di luar 30–70% lebar layar.
+pub fn is_side(x: f32) -> bool {
+    Placement::nearest(x) != Placement::Center
+}
+
+/// Titik tengah pil yang diinginkan, dalam piksel layar.
+pub fn anchor_px(x: f32, mon_left: i32, mon_width: i32) -> i32 {
+    mon_left + (x.clamp(0.0, 1.0) * mon_width as f32).round() as i32
+}
+
+/// Sisi kiri jendela Island: berpusat di jangkar, tetapi tidak pernah keluar dari layar.
+pub fn window_left(anchor: i32, mon_left: i32, mon_width: i32, window_w: i32) -> i32 {
+    (anchor - window_w / 2).clamp(mon_left, (mon_left + mon_width - window_w).max(mon_left))
+}
+
+/// Titik tengah pil di dalam jendela (dp). Pil mengikuti jangkar, tetapi didorong ke dalam
+/// secukupnya agar bentuknya (termasuk lengkung cekung dan skala hover) tetap utuh di layar.
+/// Jadi pil kecil bisa merapat ke sudut, sedangkan kartu terbuka bergeser ke dalam.
+pub fn pill_center(anchor: f32, window_w: f32, shape: &Shape) -> f32 {
+    let half = shape.total_width() * HOVER_SCALE / 2.0 + FILLET;
+    if 2.0 * half >= window_w { window_w / 2.0 } else { anchor.clamp(half, window_w - half) }
 }
 
 pub fn rest_box(shape: &Shape) -> Size {
@@ -511,6 +549,7 @@ mod tests {
             assert_eq!(size.h, PILL_H);
         }
         const { assert!(PEEK_IDLE.w > IDLE.w && PEEK_MEDIA.w > COMPACT_MAX_W) };
+        const { assert!(BUDDY.w < IDLE.w && BUDDY.h == PILL_H && BUDDY_MASCOT < BUDDY.h) };
     }
 
     #[test]
@@ -530,16 +569,38 @@ mod tests {
     #[test]
     fn letak_jendela_di_tepi_atas() {
         let (left, width, w) = (-1920, 1920, 868);
-        assert_eq!(Placement::Center.window_x(left, width, w), -1920 + 526);
-        assert_eq!(Placement::Left.window_x(left, width, w), -1920);
-        assert_eq!(Placement::Right.window_x(left, width, w), -868);
+        assert_eq!(window_left(anchor_px(0.5, left, width), left, width, w), -1920 + 526, "tengah");
+        assert_eq!(window_left(anchor_px(0.0, left, width), left, width, w), -1920, "tidak keluar di kiri");
+        assert_eq!(window_left(anchor_px(1.0, left, width), left, width, w), -868, "tidak keluar di kanan");
+        for x in [0.0, 0.1, 0.5, 0.93, 1.0, -3.0, 9.0] {
+            let l = window_left(anchor_px(x, 0, 2560), 0, 2560, 900);
+            assert!(l >= 0 && l + 900 <= 2560, "{x}: jendela tetap di dalam layar");
+        }
         for p in Placement::ALL {
             assert_eq!(Placement::from_key(&p.key().to_uppercase()), Some(p));
-            let x = p.window_x(0, 2560, 900);
-            assert!(x >= 0 && x + 900 <= 2560, "{p:?}: jendela tetap di dalam layar");
+            assert_eq!(Placement::nearest(p.x()), p);
         }
+        assert!(!is_side(0.5) && is_side(0.05) && is_side(0.95));
         assert_eq!(HoverZone::from_key("NORMAL"), Some(HoverZone::Normal));
         assert_eq!(HoverZone::from_key("mini"), None);
+    }
+
+    #[test]
+    fn pil_merapat_ke_tepi_tanpa_terpotong() {
+        let ww = window_max().w;
+        let small = Shape::single(BUDDY);
+        let card = Shape::single(Card::Lyrics.size());
+        assert_eq!(pill_center(ww / 2.0, ww, &card), ww / 2.0, "di tengah tidak bergeser");
+        for s in [small, card, Shape::single(IDLE).retracted()] {
+            for anchor in [-50.0, 0.0, 30.0, ww / 2.0, ww - 5.0, ww + 80.0] {
+                let c = pill_center(anchor, ww, &s);
+                let half = rest_box(&s).w / 2.0;
+                assert!(c - half >= -0.5 && c + half <= ww + 0.5, "{s:?} @ {anchor}: utuh di dalam jendela");
+            }
+        }
+        let edge = pill_center(ww, ww, &small);
+        assert!(ww - edge < 60.0, "pil kecil bisa merapat ke sudut kanan");
+        assert!(pill_center(ww, ww, &card) < edge, "kartu terbuka bergeser ke dalam");
     }
 
     #[test]

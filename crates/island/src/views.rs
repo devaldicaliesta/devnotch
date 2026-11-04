@@ -507,6 +507,13 @@ fn battery_badge(ui: &Ui, parent: &ContainerVisual, rect: Rect, r: PowerReading)
     Ok(true)
 }
 
+pub fn build_buddy(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
+    let s = layout::BUDDY_MASCOT;
+    let r = Rect::new((size.w - s) / 2.0, (size.h - s) / 2.0, s, s);
+    d.mascot(mascot(ui, parent, r, m.skin, m.expression)?, true);
+    Ok(())
+}
+
 pub fn build_peek_idle(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
     let lay = layout::peek_pill(size);
     if m.mascot_on {
