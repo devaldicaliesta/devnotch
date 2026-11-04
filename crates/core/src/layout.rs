@@ -13,6 +13,9 @@ pub const EXPANDED_MAX_H: f32 = 240.0;
 pub const HUD: Size = Size::new(200.0, 37.0);
 pub const PEEK_IDLE: Size = Size::new(252.0, 37.0);
 pub const PEEK_MEDIA: Size = Size::new(300.0, 37.0);
+/// Pil kecil berisi maskot saat Island berada di samping dan tidak ada aktivitas.
+pub const BUDDY: Size = Size::new(64.0, 37.0);
+pub const BUDDY_MASCOT: f32 = 27.0;
 pub const SEEK_PAD_Y: f32 = 8.0;
 pub const SEEK_PAD_X: f32 = 6.0;
 pub const HOVER_SCALE: f32 = 1.05;

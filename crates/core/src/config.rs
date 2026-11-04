@@ -24,6 +24,7 @@ pub struct IslandConfig {
     pub avoid_windows: bool,
     pub position: Placement,
     pub hover_zone: HoverZone,
+    pub side_mascot: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +82,7 @@ impl Default for Config {
                 avoid_windows: true,
                 position: Placement::Center,
                 hover_zone: HoverZone::Small,
+                side_mascot: true,
             },
             style: Style::Neumorphism,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
@@ -129,6 +131,9 @@ position = "center"
 #   "small"   selebar bibir, setipis 2 dp, kursor harus diam 0,4 detik.
 #   "normal"  selebar pil, 4 dp, ditahan 0,2 detik.
 hover_zone = "small"
+# Saat position "left" atau "right" dan tidak ada aktivitas, tampilkan maskot kecil
+# yang menemani di tepi atas (tidak masuk ke tepi). Matanya mengikuti kursor.
+side_mascot = true
 
 [appearance]
 # "neumorphism" (permukaan lembut timbul), "clay" (tombol 3D seperti tanah liat),
@@ -308,7 +313,7 @@ impl<'a> Reader<'a> {
 pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
 
 const KNOWN: &[(&str, &[&str])] = &[
-    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "position", "hover_zone", "mode", "autohide", "top_margin"]),
+    ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "position", "hover_zone", "side_mascot", "mode", "autohide", "top_margin"]),
     ("appearance", &["style"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds", "lyrics"]),
@@ -384,6 +389,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let hover_zone = r.parsed("island.hover_zone", d.island.hover_zone, |s| {
         HoverZone::from_key(s).ok_or("harus \"small\" atau \"normal\"".into())
     });
+    let side_mascot = r.bool("island.side_mascot", d.island.side_mascot);
     let style = r.parsed("appearance.style", d.style, |s| {
         Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", atau \"classic\"".into())
     });
@@ -420,7 +426,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
 
     let config = Config {
         language,
-        island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows, position, hover_zone },
+        island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows, position, hover_zone, side_mascot },
         style,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger, lyrics },
@@ -656,6 +662,10 @@ low_thresholds = [15, 0, "x"]
         assert_eq!(c.island.position, Placement::Center);
         assert_eq!(c.island.hover_zone, HoverZone::Small);
         assert_eq!(w.len(), 2, "{w:?}");
+        assert!(d.island.side_mascot);
+        let (c, w) = parse(&set_value(DEFAULT_TOML, "island", "side_mascot", "false"));
+        assert!(w.is_empty(), "{w:?}");
+        assert!(!c.island.side_mascot);
     }
 
     #[test]

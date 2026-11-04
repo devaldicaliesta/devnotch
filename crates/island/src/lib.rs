@@ -32,7 +32,7 @@ use notchi_platform_win::gfx::Gfx;
 use notchi_platform_win::media::{MediaCommand, MediaService};
 use notchi_platform_win::window::{
     Event, IconImage, MenuItem, Monitor, MouseButton, OwnedWindow, TrayEvent, TrayIcon, UiProxy, Window, primary_monitor,
-    quit,
+    quit, cursor_pos,
 };
 use notchi_platform_win::{Result, comp, fswatch, net, now_ms, power, privacy, shell, sys};
 
@@ -52,6 +52,7 @@ const T_TRIM: usize = 8;
 const T_LYRICS: usize = 9;
 const T_REVEAL: usize = 10;
 const T_COVER: usize = 11;
+const T_GAZE: usize = 12;
 
 const HK_TOGGLE: i32 = 1;
 const HK_ESC: i32 = 2;
@@ -78,6 +79,8 @@ const HOUR_MS: Ms = 3_600_000;
 const PEEK_MS: Ms = 2_500;
 const RETRACT_DELAY_MS: u32 = 300;
 const COVER_SETTLE_MS: u32 = 150;
+const GAZE_MS: u32 = 66;
+const GAZE_REACH: f32 = 60.0;
 const COLLAPSE_DELAY_MS: u32 = 1_500;
 const TRIM_DELAY_MS: u32 = 4_000;
 const LYRICS_DEBOUNCE_MS: u32 = 350;
@@ -135,6 +138,7 @@ enum PeekKind {
 enum ViewKind {
     Hidden,
     Empty,
+    Buddy,
     Peek(PeekKind),
     Compact(Slot),
     Minimal(Slot, Slot),
@@ -224,6 +228,9 @@ pub struct IslandApp {
     shape: Shape,
     visible: bool,
     window_px: (i32, i32),
+    window_origin: (i32, i32),
+    gazing: bool,
+    gaze_last: Option<(i32, i32)>,
     morph_seq: u64,
     retire_seq: u64,
     fx: Vec<(u64, ContainerVisual)>,
@@ -363,6 +370,9 @@ impl IslandApp {
             shape: Shape::single(layout::IDLE),
             visible: false,
             window_px: (0, 0),
+            window_origin: (0, 0),
+            gazing: false,
+            gaze_last: None,
             morph_seq: 0,
             retire_seq: 0,
             fx: Vec::new(),
@@ -424,6 +434,7 @@ impl IslandApp {
         let old = std::mem::replace(&mut self.cfg, new);
         self.warnings = warnings;
         self.island.set_behavior(self.cfg.island.behavior);
+        self.island.set_idle_pinned(self.side_buddy());
         self.ui.accent = self.cfg.mascot.skin.color();
         let cfg = &self.cfg;
 
@@ -673,6 +684,7 @@ impl IslandApp {
                 self.window.kill_timer(T_COVER);
                 self.check_covered();
             }
+            T_GAZE => self.gaze(),
             _ => {}
         }
     }
@@ -831,6 +843,7 @@ impl IslandApp {
 
     fn on_mouse_move(&mut self, p: Point) {
         self.inside = true;
+        self.sync_gaze();
         self.window.kill_timer(T_RETRACT);
         if !self.island.is_hover() {
             if !self.retracted {
@@ -889,6 +902,7 @@ impl IslandApp {
         self.wheel_acc = 0;
         self.release_button();
         let _ = self.track_pointer(None);
+        self.sync_gaze();
         if self.island.tucks() && !self.island.is_expanded() {
             self.window.set_timer(T_RETRACT, RETRACT_DELAY_MS);
         } else {
@@ -1354,6 +1368,7 @@ impl IslandApp {
             Setting::Liquid => self.persist("motion", "liquid", flag(on)),
             Setting::Fullscreen => self.persist("island", "hide_in_fullscreen", flag(on)),
             Setting::AvoidWindows => self.persist("island", "avoid_windows", flag(on)),
+            Setting::SideMascot => self.persist("island", "side_mascot", flag(on)),
             Setting::Position => self.persist("island", "position", &quoted(Placement::ALL[i.min(2)].key())),
             Setting::HoverZone => self.persist("island", "hover_zone", &quoted(HoverZone::ALL[i.min(1)].key())),
             Setting::Style => self.persist("appearance", "style", &quoted(Style::ALL[i.min(2)].key())),
@@ -1417,6 +1432,55 @@ impl IslandApp {
             self.key = None;
         }
         self.schedule(now);
+        self.sync_gaze();
+    }
+
+    fn side_buddy(&self) -> bool {
+        let c = &self.cfg;
+        c.island.position != Placement::Center && c.island.side_mascot && c.mascot.enabled
+    }
+
+    /// Mata maskot mengikuti kursor di mana pun di layar, tidak hanya saat kursor di atas pil.
+    /// Hanya berjalan selama maskot tampil dan kursor di luar pil; posisi yang sama dilewati.
+    fn sync_gaze(&mut self) {
+        let has_mascot = self.content.as_ref().is_some_and(|c| c.d.mascot.is_some());
+        let want = has_mascot && self.visible && !self.retracted && !self.inside;
+        if want != self.gazing {
+            self.gazing = want;
+            self.gaze_last = None;
+            if want {
+                self.window.set_timer(T_GAZE, GAZE_MS);
+            } else {
+                self.window.kill_timer(T_GAZE);
+            }
+        }
+    }
+
+    fn gaze(&mut self) {
+        if !self.gazing || self.inside {
+            return;
+        }
+        let Some(pos) = cursor_pos() else { return };
+        if self.gaze_last == Some(pos) {
+            return;
+        }
+        self.gaze_last = Some(pos);
+        let s = self.ui.scale;
+        let p = Point::new((pos.0 - self.window_origin.0) as f32 / s, (pos.1 - self.window_origin.1) as f32 / s);
+        let r = self.shape.main_rect(self.window_width_dp());
+        let Some(m) = self.content.as_mut().and_then(|c| c.d.mascot.as_mut()) else { return };
+        let c = m.center();
+        let (vx, vy) = (p.x - r.x - c.x, p.y - r.y - c.y);
+        let len = vx.hypot(vy);
+        let (dx, dy) = if len < 1.0 {
+            (0.0, 0.0)
+        } else {
+            let k = (len / GAZE_REACH).min(1.0) / len;
+            (vx * k, vy * k)
+        };
+        if let Err(e) = m.look(&self.ui, dx, dy) {
+            log(&format!("pandangan maskot gagal: {e}"));
+        }
     }
 
     fn view_kind(&self, pres: &Presentation) -> ViewKind {
@@ -1425,6 +1489,7 @@ impl IslandApp {
         match pres {
             Presentation::Hidden => ViewKind::Hidden,
             Presentation::Idle if glance => ViewKind::Peek(PeekKind::Idle),
+            Presentation::Idle if self.side_buddy() => ViewKind::Buddy,
             Presentation::Idle => ViewKind::Empty,
             Presentation::Compact if glance && ordered[0] == ActivityKind::Media => ViewKind::Peek(PeekKind::Media),
             Presentation::Compact => ViewKind::Compact(slot_of(ordered[0])),
@@ -1444,6 +1509,7 @@ impl IslandApp {
     fn shape_for(kind: ViewKind, alert: Option<&AlertKind>) -> Shape {
         match kind {
             ViewKind::Hidden | ViewKind::Empty => Shape::single(layout::IDLE),
+            ViewKind::Buddy => Shape::single(layout::BUDDY),
             ViewKind::Peek(PeekKind::Idle) => Shape::single(layout::PEEK_IDLE),
             ViewKind::Peek(PeekKind::Media) => Shape::single(layout::PEEK_MEDIA),
             ViewKind::Compact(s) => Shape::single(views::compact_size(s, false)),
@@ -1653,6 +1719,7 @@ impl IslandApp {
         let size = Self::shape_for(key.kind, alert).main;
         match key.kind {
             ViewKind::Hidden | ViewKind::Empty => {}
+            ViewKind::Buddy => views::build_buddy(&self.ui, &root, size, &m, &mut d)?,
             ViewKind::Peek(PeekKind::Idle) => views::build_peek_idle(&self.ui, &root, size, &m, &mut d)?,
             ViewKind::Peek(PeekKind::Media) => views::build_peek_media(&self.ui, &root, size, &m, &mut d)?,
             ViewKind::Compact(slot) => views::build_compact(&self.ui, &root, slot, size, &m, &mut d)?,
@@ -1863,6 +1930,7 @@ impl IslandApp {
         let mon = primary_monitor();
         let (x, w, h) = self.window_bounds(&mon);
         self.window_px = (w, h);
+        self.window_origin = (x, mon.top);
         self.window.set_bounds(x, mon.top, w, h, false);
         self.apply_region();
     }

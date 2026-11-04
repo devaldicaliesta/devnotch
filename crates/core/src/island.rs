@@ -87,6 +87,7 @@ pub struct Island {
     hover: bool,
     snoozed_until: Option<Ms>,
     peek_until: Option<Ms>,
+    idle_pinned: bool,
 }
 
 impl Island {
@@ -101,6 +102,7 @@ impl Island {
             hover: false,
             snoozed_until: None,
             peek_until: None,
+            idle_pinned: false,
         }
     }
 
@@ -135,11 +137,21 @@ impl Island {
         self.peek_until = Some(self.peek_until.map_or(until, |p| p.max(until)));
     }
 
+    /// Saat diam (tanpa aktivitas), Island tetap tampil walau perilakunya otomatis
+    /// atau ada jendela di bawahnya. Dipakai maskot yang menemani di samping layar.
+    pub fn set_idle_pinned(&mut self, pinned: bool) {
+        self.idle_pinned = pinned;
+    }
+
     pub fn is_retracted(&self, now: Ms) -> bool {
         if !self.tucks() || self.hover || self.peek_until.is_some_and(|t| now < t) {
             return false;
         }
-        matches!(self.presentation(now), Presentation::Idle | Presentation::Compact | Presentation::Minimal)
+        match self.presentation(now) {
+            Presentation::Idle => !self.idle_pinned,
+            Presentation::Compact | Presentation::Minimal => true,
+            _ => false,
+        }
     }
 
     pub fn is_expanded(&self) -> bool {
@@ -424,6 +436,23 @@ mod tests {
         assert!(!h.is_retracted(0));
         h.set_activity_count(1);
         assert!(h.is_retracted(0), "aktivitas di atas browser cukup tampil sebagai bibir");
+    }
+
+    #[test]
+    fn maskot_samping_tetap_tampil_saat_diam() {
+        let mut i = Island::new(Behavior::Autohide);
+        i.set_idle_pinned(true);
+        assert!(!i.is_retracted(0), "maskot di samping tidak masuk ke tepi");
+        i.set_covered(true);
+        assert!(!i.is_retracted(0), "tetap menemani di atas browser");
+        i.set_activity_count(1);
+        assert!(i.is_retracted(0), "aktivitas tetap mengikuti aturan menyingkir");
+        i.set_activity_count(0);
+        i.set_idle_pinned(false);
+        assert!(i.is_retracted(0));
+        let mut h = Island::new(Behavior::Hide);
+        h.set_idle_pinned(true);
+        assert_eq!(h.presentation(0), Presentation::Hidden, "perilaku sembunyi tetap dihormati");
     }
 
     #[test]

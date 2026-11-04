@@ -855,6 +855,11 @@ impl Monitor {
     }
 }
 
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    let mut pt = POINT::default();
+    unsafe { GetCursorPos(&mut pt) }.ok().map(|_| (pt.x, pt.y))
+}
+
 pub fn primary_monitor() -> Monitor {
     unsafe {
         let hmon = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);

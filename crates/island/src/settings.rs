@@ -35,6 +35,7 @@ pub enum Setting {
     Fullscreen,
     AvoidWindows,
     Position,
+    SideMascot,
     HoverZone,
     Style,
     Reduce,
@@ -63,6 +64,7 @@ pub fn value(cfg: &Config, s: Setting) -> usize {
         Setting::Fullscreen => cfg.island.hide_in_fullscreen as usize,
         Setting::AvoidWindows => cfg.island.avoid_windows as usize,
         Setting::Position => cfg.island.position.index(),
+        Setting::SideMascot => cfg.island.side_mascot as usize,
         Setting::HoverZone => cfg.island.hover_zone.index(),
         Setting::Style => cfg.style.index(),
         Setting::Reduce => match cfg.reduce_motion {
@@ -321,7 +323,7 @@ impl Settings {
         self.choice(&ui, Setting::Reduce, Rect::new(row.x + COL - INNER - 168.0, row.y + 7.0, 168.0, 32.0), &opts, value(cfg, Setting::Reduce))?;
         let left_bottom = y2 + ROW;
 
-        let mut y = self.section(&ui, right, TOP, COL, t(lang, Text::SecMascot), 2.0 * ROW)?;
+        let mut y = self.section(&ui, right, TOP, COL, t(lang, Text::SecMascot), 2.0 * ROW + 74.0)?;
         self.toggle(&ui, Setting::Mascot, Rect::new(right, y, COL, ROW), t(lang, Text::ShowMascot), None, cfg)?;
         y += ROW;
         self.divider(&ui, right, y, COL)?;
@@ -329,6 +331,9 @@ impl Settings {
         self.label(&ui, row, t(lang, Text::MascotColor))?;
         self.swatches(&ui, row.x + COL - INNER, row.y + ROW / 2.0, value(cfg, Setting::Skin))?;
         y += ROW;
+        self.divider(&ui, right, y, COL)?;
+        self.toggle(&ui, Setting::SideMascot, Rect::new(right, y, COL, 74.0), t(lang, Text::SideMascot), Some(t(lang, Text::SideMascotDesc)), cfg)?;
+        y += 74.0;
 
         let lyric_h = 74.0;
         let mut y = self.section(&ui, right, y + 18.0, COL, t(lang, Text::SecMedia), 3.0 * ROW + lyric_h)?;
