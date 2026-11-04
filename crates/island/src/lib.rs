@@ -33,7 +33,6 @@ use notchi_core::timer::{Countdown, Stopwatch};
 use notchi_platform_win::audio::Volume;
 use notchi_platform_win::bluetooth::BluetoothWatcher;
 use notchi_platform_win::brightness::Brightness;
-use notchi_platform_win::dragdrop;
 use notchi_platform_win::comp::{Animator, CompositionHost, CompositionSpriteShape, ContainerVisual, ShapeVisual, v2, v3};
 use notchi_platform_win::gfx::Gfx;
 use notchi_platform_win::media::{MediaCommand, MediaService};
@@ -1487,13 +1486,21 @@ impl IslandApp {
         self.release_button();
         self.pointer = Pointer::default();
         self.drag = None;
-        self.window.release_capture();
-        if let Err(e) = dragdrop::drag_out(&paths) {
-            log(&format!("rak berkas: seret keluar gagal: {e}"));
+        match self.window.drag_files_out(&paths) {
+            Ok(effect) if effect.0 != 0 => {
+                // Berhasil dilepas di aplikasi lain: berkas itu keluar dari rak.
+                self.shelf.remove_paths(&paths);
+                self.sync_shelf_icons();
+            }
+            Ok(_) => {}
+            Err(e) => log(&format!("rak berkas: seret keluar gagal ({} berkas): {e}", paths.len())),
         }
         // Tujuan bisa memindahkan berkasnya (misalnya folder di drive yang sama).
         if self.shelf.prune(|p| p.exists()) {
             self.sync_shelf_icons();
+        }
+        if self.shelf.is_empty() {
+            self.island.collapse();
         }
         self.key = None;
     }
@@ -1888,7 +1895,9 @@ impl IslandApp {
         match pres {
             Presentation::Hidden => ViewKind::Hidden,
             Presentation::Idle if glance => ViewKind::Peek(PeekKind::Idle),
-            Presentation::Idle if self.side_buddy() => ViewKind::Buddy,
+            // Tanpa aktivitas, pil kosong diganti pil kecil berisi maskot (di mana pun letaknya).
+            // `side_buddy` hanya menentukan apakah pil itu tetap tampil (tidak masuk ke tepi).
+            Presentation::Idle if self.cfg.mascot.enabled => ViewKind::Buddy,
             Presentation::Idle => ViewKind::Empty,
             Presentation::Compact if glance && ordered[0] == ActivityKind::Media => ViewKind::Peek(PeekKind::Media),
             Presentation::Compact => ViewKind::Compact(slot_of(ordered[0])),
