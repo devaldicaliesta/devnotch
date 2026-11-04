@@ -113,6 +113,11 @@ pub enum Text {
     BtDisconnected,
     BtCard,
     BtDesc,
+    ShelfTitle,
+    ShelfDrop,
+    ShelfFiles,
+    ShelfAll,
+    ShelfDesc,
 }
 
 pub fn t(lang: Lang, key: Text) -> &'static str {
@@ -314,6 +319,16 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, BtCard) => "Bluetooth devices",
         (Lang::Id, BtDesc) => "Alert saat tersambung atau terputus, dengan baterai",
         (Lang::En, BtDesc) => "Alert on connect or disconnect, with battery",
+        (Lang::Id, ShelfTitle) => "Rak berkas",
+        (Lang::En, ShelfTitle) => "File shelf",
+        (Lang::Id, ShelfDrop) => "Lepas berkas di sini",
+        (Lang::En, ShelfDrop) => "Drop files here",
+        (Lang::Id, ShelfFiles) => "berkas",
+        (Lang::En, ShelfFiles) => "files",
+        (Lang::Id, ShelfAll) => "Seret semua",
+        (Lang::En, ShelfAll) => "Drag all",
+        (Lang::Id, ShelfDesc) => "Seret berkas ke tepi atas untuk disimpan sementara",
+        (Lang::En, ShelfDesc) => "Drag files to the top edge to hold them for later",
     }
 }
 

@@ -13,6 +13,7 @@ use notchi_core::Ms;
 use notchi_core::activity::{Activities, ActivityKind};
 use notchi_core::bluetooth::Bluetooth;
 use notchi_core::downloads::{Downloads, Partial};
+use notchi_core::shelf::Shelf;
 use notchi_core::color::{self, Color, Skin};
 use notchi_core::config::{self, Config, ReduceMotion, Warning};
 use notchi_core::geom::{Point, Size, scale_for_dpi};
@@ -32,6 +33,7 @@ use notchi_core::timer::{Countdown, Stopwatch};
 use notchi_platform_win::audio::Volume;
 use notchi_platform_win::bluetooth::BluetoothWatcher;
 use notchi_platform_win::brightness::Brightness;
+use notchi_platform_win::dragdrop;
 use notchi_platform_win::comp::{Animator, CompositionHost, CompositionSpriteShape, ContainerVisual, ShapeVisual, v2, v3};
 use notchi_platform_win::gfx::Gfx;
 use notchi_platform_win::media::{MediaCommand, MediaService};
@@ -180,6 +182,7 @@ struct ViewKey {
     lyric: u8,
     battery: Option<(u8, bool)>,
     download: Option<(String, usize)>,
+    shelf: (usize, bool),
 }
 
 struct Content {
@@ -299,6 +302,10 @@ pub struct IslandApp {
     brightness_acc: f32,
     brightness_warned: bool,
     blur_on: bool,
+    shelf: Shelf,
+    shelf_icons: Vec<(PathBuf, Option<Artwork>)>,
+    shelf_hover: bool,
+    shelf_opened: bool,
 }
 
 impl std::fmt::Debug for IslandApp {
@@ -324,6 +331,7 @@ fn slot_of(kind: ActivityKind) -> Slot {
         ActivityKind::Timer => Slot::Timer,
         ActivityKind::Stopwatch => Slot::Stopwatch,
         ActivityKind::Download => Slot::Download,
+        ActivityKind::Shelf => Slot::Shelf,
         _ => Slot::Media,
     }
 }
@@ -470,6 +478,10 @@ impl IslandApp {
             brightness_acc: 0.0,
             brightness_warned: false,
             blur_on: false,
+            shelf: Shelf::new(),
+            shelf_icons: Vec::new(),
+            shelf_hover: false,
+            shelf_opened: false,
             cfg: Config::default(),
             cfg_text,
             warnings: Vec::new(),
@@ -485,6 +497,9 @@ impl IslandApp {
         app.power = Some(reading);
         if app.cfg.power.enabled {
             let _ = app.battery.update(reading).map(|e| app.power_alert(e));
+        }
+        if !app.window.accept_file_drops(app.proxy.clone()) {
+            log("rak berkas: jendela tidak bisa menerima seret-lepas");
         }
         app.check_fullscreen();
         app.layout_window();
@@ -728,6 +743,12 @@ impl IslandApp {
             }
             Event::BluetoothRemoved(id) => self.bluetooth.remove(&id),
             Event::BluetoothReady => self.bluetooth.ready(),
+            Event::ShelfDrag(on) => self.on_shelf_drag(on),
+            Event::ShelfDrop(paths) => {
+                if self.cfg.shelf.enabled && self.shelf.add(paths) > 0 {
+                    self.sync_shelf_icons();
+                }
+            }
             Event::Brightness(level) => match level {
                 Some(level) => {
                     self.island.push_alert(AlertKind::Brightness { level }, now);
@@ -998,6 +1019,15 @@ impl IslandApp {
                 self.preview_seek(frac);
             }
         }
+        if let Some(down) = self.pointer.down
+            && !self.pointer.consumed
+            && self.island.is_expanded()
+            && let Some(b @ (Button::ShelfItem(_) | Button::ShelfAll)) = self.pressed_button
+            && (p.x - down.x).hypot(p.y - down.y) > DRAG_DP
+        {
+            self.shelf_drag_out(b);
+            return;
+        }
         if let Some(down) = self.pointer.down {
             let dx = p.x - down.x;
             if self.dragging {
@@ -1099,7 +1129,11 @@ impl IslandApp {
         self.pointer = Pointer { down: Some(p), consumed: false, seek: None };
         let mon = primary_monitor();
         self.drag = cursor_pos().map(|c| (c.0, self.anchor(&mon)));
-        self.window.set_timer(T_LONG_PRESS, LONG_PRESS_MS);
+        // Tahan untuk membuka hanya berlaku pada pil tertutup; di kartu terbuka, tahan lalu
+        // seret (misalnya berkas di rak) tidak boleh tertelan oleh tekan-lama.
+        if !self.island.is_expanded() {
+            self.window.set_timer(T_LONG_PRESS, LONG_PRESS_MS);
+        }
         let hit = self.button_at(p);
         if let Some(b) = hit.filter(|b| *b != Button::Mascot) {
             self.pop_button(b, PRESS_POP);
@@ -1347,6 +1381,17 @@ impl IslandApp {
                 self.persist("media", "lyrics", flag(on));
             }
             Button::Mascot => self.boop(),
+            Button::ShelfItem(i) => {
+                if let Some(item) = self.shelf.get(i as usize) {
+                    shell::open_path(&item.path);
+                }
+            }
+            Button::ShelfAll => {}
+            Button::ShelfClear => {
+                self.shelf.clear();
+                self.sync_shelf_icons();
+                self.island.collapse();
+            }
             Button::OpenDownloads => {
                 if let Some(dir) = &self.downloads_dir {
                     shell::open_folder(dir);
@@ -1406,6 +1451,66 @@ impl IslandApp {
                 b.step(step);
             }
         }
+    }
+
+    /// Berkas diseret masuk ke atau keluar dari atas Island.
+    fn on_shelf_drag(&mut self, on: bool) {
+        if !self.cfg.shelf.enabled {
+            return;
+        }
+        self.shelf_hover = on;
+        if on {
+            self.window.kill_timer(T_COLLAPSE);
+            self.window.kill_timer(T_RETRACT);
+            self.island.set_hover(true);
+            if !self.island.is_expanded() {
+                self.shelf_opened = true;
+                self.island.long_press();
+            }
+        } else {
+            if !self.inside {
+                self.island.set_hover(false);
+            }
+            if std::mem::take(&mut self.shelf_opened) {
+                self.window.set_timer(T_COLLAPSE, COLLAPSE_DELAY_MS);
+            }
+        }
+    }
+
+    /// Seret berkas rak keluar ke aplikasi lain. Loop OLE memblokir sampai tombol dilepas.
+    fn shelf_drag_out(&mut self, b: Button) {
+        let paths = match b {
+            Button::ShelfItem(i) => self.shelf.get(i as usize).map(|x| vec![x.path.clone()]).unwrap_or_default(),
+            _ => self.shelf.paths(),
+        };
+        self.window.kill_timer(T_LONG_PRESS);
+        self.release_button();
+        self.pointer = Pointer::default();
+        self.drag = None;
+        self.window.release_capture();
+        if let Err(e) = dragdrop::drag_out(&paths) {
+            log(&format!("rak berkas: seret keluar gagal: {e}"));
+        }
+        // Tujuan bisa memindahkan berkasnya (misalnya folder di drive yang sama).
+        if self.shelf.prune(|p| p.exists()) {
+            self.sync_shelf_icons();
+        }
+        self.key = None;
+    }
+
+    /// Ikon shell untuk setiap berkas di rak, dihitung sekali per berkas.
+    fn sync_shelf_icons(&mut self) {
+        let px = (40.0 * self.ui.scale).round() as u32;
+        let mut next = Vec::with_capacity(self.shelf.len());
+        for item in self.shelf.items() {
+            let icon = match self.shelf_icons.iter().position(|(p, _)| *p == item.path) {
+                Some(i) => self.shelf_icons.swap_remove(i).1,
+                None => shell::file_icon(&item.path, px),
+            };
+            next.push((item.path.clone(), icon));
+        }
+        self.shelf_icons = next;
+        self.key = None;
     }
 
     /// Mulai atau hentikan sumber aktivitas yang bisa dimatikan di pengaturan.
@@ -1669,6 +1774,7 @@ impl IslandApp {
             Setting::ScrollBrightness => self.persist("media", "scroll_brightness", flag(on)),
             Setting::Downloads => self.persist("downloads", "enabled", flag(on)),
             Setting::Bluetooth => self.persist("bluetooth", "enabled", flag(on)),
+            Setting::Shelf => self.persist("shelf", "enabled", flag(on)),
             Setting::Sound => self.persist("timer", "sound", flag(on)),
             Setting::Language => self.persist_with(|text| config::set_value(text, "", "language", &quoted(if on { "en" } else { "id" }))),
             Setting::Login => self.persist("startup", "launch_at_login", flag(on)),
@@ -1704,6 +1810,7 @@ impl IslandApp {
             a.first().map(|d| DownloadInfo { name: d.name.clone(), bytes: d.bytes, rate: d.rate, count: a.len() })
         });
         self.acts.set(ActivityKind::Download, self.download_info.is_some());
+        self.acts.set(ActivityKind::Shelf, self.cfg.shelf.enabled && !self.shelf.is_empty());
         self.island.set_activity_count(self.acts.len());
         let ordered = self.acts.ordered();
         if ordered.iter().any(|k| !self.last_ordered.contains(k)) {
@@ -1786,12 +1893,14 @@ impl IslandApp {
             Presentation::Compact if glance && ordered[0] == ActivityKind::Media => ViewKind::Peek(PeekKind::Media),
             Presentation::Compact => ViewKind::Compact(slot_of(ordered[0])),
             Presentation::Minimal => ViewKind::Minimal(slot_of(ordered[0]), slot_of(ordered[1])),
+            Presentation::Expanded if self.shelf_hover => ViewKind::Card(Card::Shelf),
             Presentation::Expanded => ViewKind::Card(match ordered.first() {
                 Some(ActivityKind::Media) if self.cfg.media.lyrics => Card::Lyrics,
                 Some(ActivityKind::Media) => Card::Media,
                 Some(ActivityKind::Timer) => Card::Timer,
                 Some(ActivityKind::Stopwatch) => Card::Stopwatch,
                 Some(ActivityKind::Download) => Card::Download,
+                Some(ActivityKind::Shelf) => Card::Shelf,
                 _ => Card::Home,
             }),
             Presentation::Alert(a) if a.is_hud() => ViewKind::Hud,
@@ -1875,6 +1984,7 @@ impl IslandApp {
                 None
             },
             download: self.download_info.as_ref().map(|d| (d.name.clone(), d.count)),
+            shelf: (self.shelf.len(), self.shelf_hover),
         };
 
         let revealing = self.retracted && !retracted;
@@ -2008,6 +2118,9 @@ impl IslandApp {
             lyrics: self.lyric_state(),
             battery: self.power,
             download: self.download_info.as_ref(),
+            shelf: self.shelf.items(),
+            shelf_icons: &self.shelf_icons,
+            shelf_hover: self.shelf_hover,
         }
     }
 
@@ -2053,6 +2166,7 @@ impl IslandApp {
             ViewKind::Card(Card::Stopwatch) => views::build_timer_card(&self.ui, &root, true, &m, &mut d)?,
             ViewKind::Card(Card::Home) => views::build_home_card(&self.ui, &root, &m, &mut d)?,
             ViewKind::Card(Card::Download) => views::build_download_card(&self.ui, &root, &m, &mut d)?,
+            ViewKind::Card(Card::Shelf) => views::build_shelf_card(&self.ui, &root, &m, &mut d)?,
             ViewKind::Alert => {
                 if let Some(a) = alert {
                     views::build_alert(&self.ui, &root, a, &m, &mut d)?;

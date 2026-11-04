@@ -51,6 +51,11 @@ pub struct DownloadsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ShelfConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct BluetoothConfig {
     pub enabled: bool,
 }
@@ -80,6 +85,7 @@ pub struct Config {
     pub power: PowerConfig,
     pub downloads: DownloadsConfig,
     pub bluetooth: BluetoothConfig,
+    pub shelf: ShelfConfig,
     pub timer: TimerConfig,
     pub reduce_motion: ReduceMotion,
     pub liquid: bool,
@@ -117,6 +123,7 @@ impl Default for Config {
             power: PowerConfig { enabled: true, low_thresholds: vec![20, 10] },
             downloads: DownloadsConfig { enabled: true },
             bluetooth: BluetoothConfig { enabled: true },
+            shelf: ShelfConfig { enabled: true },
             timer: TimerConfig { presets_minutes: vec![1, 5, 10, 25], sound: true },
             reduce_motion: ReduceMotion::System,
             liquid: true,
@@ -203,6 +210,11 @@ enabled = true
 
 [bluetooth]
 # Alert saat perangkat Bluetooth tersambung atau terputus, beserta baterainya bila dilaporkan.
+enabled = true
+
+[shelf]
+# Rak berkas: seret berkas ke tepi atas (Island) untuk disimpan sementara, lalu seret keluar
+# ke folder atau aplikasi lain. Hanya jalurnya yang disimpan; berkas tidak disalin.
 enabled = true
 
 [timer]
@@ -375,6 +387,7 @@ const KNOWN: &[(&str, &[&str])] = &[
     ("media", &["enabled", "allow", "block", "scroll_volume", "scroll_brightness", "paused_linger_seconds", "lyrics"]),
     ("downloads", &["enabled"]),
     ("bluetooth", &["enabled"]),
+    ("shelf", &["enabled"]),
     ("power", &["enabled", "low_thresholds"]),
     ("timer", &["presets_minutes", "sound"]),
     ("motion", &["reduce", "liquid"]),
@@ -471,6 +484,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let scroll_brightness = r.bool("media.scroll_brightness", d.media.scroll_brightness);
     let downloads_enabled = r.bool("downloads.enabled", d.downloads.enabled);
     let bluetooth_enabled = r.bool("bluetooth.enabled", d.bluetooth.enabled);
+    let shelf_enabled = r.bool("shelf.enabled", d.shelf.enabled);
     let linger = r.int("media.paused_linger_seconds", 0, 3600, d.media.paused_linger_seconds as i64) as u32;
     let lyrics = r.bool("media.lyrics", d.media.lyrics);
 
@@ -504,6 +518,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, scroll_brightness, paused_linger_seconds: linger, lyrics },
         downloads: DownloadsConfig { enabled: downloads_enabled },
         bluetooth: BluetoothConfig { enabled: bluetooth_enabled },
+        shelf: ShelfConfig { enabled: shelf_enabled },
         power: PowerConfig { enabled: power_enabled, low_thresholds: thresholds.into_iter().map(|t| t as u8).collect() },
         timer: TimerConfig { presets_minutes: presets.into_iter().map(|t| t as u32).collect(), sound },
         reduce_motion,

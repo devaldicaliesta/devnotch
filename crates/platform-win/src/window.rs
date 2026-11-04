@@ -114,6 +114,9 @@ pub enum Event {
     BluetoothRemoved(String),
     BluetoothReady,
     Brightness(Option<u8>),
+    /// Berkas sedang diseret di atas Island (true) atau sudah keluar/dilepas (false).
+    ShelfDrag(bool),
+    ShelfDrop(Vec<std::path::PathBuf>),
     User(u64),
     Close,
     Key(u32),
@@ -707,6 +710,18 @@ unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
 }
 
 impl Window {
+    /// Terima berkas yang diseret dan dilepas di jendela ini (rak berkas).
+    pub fn accept_file_drops(&self, proxy: UiProxy) -> bool {
+        crate::dragdrop::register(self.hwnd, proxy)
+    }
+
+    /// Lepaskan tangkapan mouse, misalnya sebelum loop seret OLE mengambil alih.
+    pub fn release_capture(&self) {
+        unsafe {
+            let _ = ReleaseCapture();
+        }
+    }
+
     /// Samakan bilah judul dengan tema (gelap/terang) jendela panel.
     pub fn set_caption(&self, caption: Color, dark: bool) {
         set_caption(self.hwnd, caption, dark);

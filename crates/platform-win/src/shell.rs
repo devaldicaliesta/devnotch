@@ -99,6 +99,60 @@ pub fn reveal(path: &std::path::Path) {
     }
 }
 
+/// Buka berkas dengan aplikasi bawaannya.
+pub fn open_path(path: &std::path::Path) {
+    let p = HSTRING::from(path.as_os_str());
+    unsafe {
+        ShellExecuteW(None, w!("open"), &p, None, None, SW_SHOWNORMAL);
+    }
+}
+
+/// Ikon berkas dari shell (seperti di Explorer), `px` piksel persegi, sebagai BGRA premultiplied.
+pub fn file_icon(path: &std::path::Path, px: u32) -> Option<notchi_core::media::Artwork> {
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{
+        BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject,
+        GetDIBits, GetObjectW, HGDIOBJ,
+    };
+    use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY};
+    unsafe {
+        let name = HSTRING::from(path.as_os_str());
+        let factory: IShellItemImageFactory = SHCreateItemFromParsingName(&name, None).ok()?;
+        let hbmp = factory.GetImage(SIZE { cx: px as i32, cy: px as i32 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;
+        let mut bm = BITMAP::default();
+        let ok = GetObjectW(HGDIOBJ(hbmp.0), size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _)) != 0;
+        let (w, h) = (bm.bmWidth.unsigned_abs(), bm.bmHeight.unsigned_abs());
+        let mut out = None;
+        if ok && w > 0 && h > 0 && w <= 512 && h <= 512 {
+            let mut info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: w as i32,
+                    biHeight: -(h as i32),
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut bgra = vec![0u8; (w * h * 4) as usize];
+            let dc = CreateCompatibleDC(None);
+            let rows = GetDIBits(dc, hbmp, 0, h, Some(bgra.as_mut_ptr() as *mut _), &mut info, DIB_RGB_COLORS);
+            let _ = DeleteDC(dc);
+            if rows > 0 {
+                // Bitmap tanpa kanal alfa (semua 0) berarti pekat.
+                if bgra.as_chunks::<4>().0.iter().all(|p| p[3] == 0) {
+                    bgra.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);
+                }
+                out = Some(notchi_core::media::Artwork { width: w, height: h, bgra });
+            }
+        }
+        let _ = DeleteObject(HGDIOBJ(hbmp.0));
+        out
+    }
+}
+
 pub fn open_folder(dir: &std::path::Path) {
     let dir = HSTRING::from(dir.as_os_str());
     unsafe {

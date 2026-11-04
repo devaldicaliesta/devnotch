@@ -13,7 +13,7 @@ use notchi_platform_win::window::{Event, IconImage, OwnedWindow, UiProxy, create
 use crate::fx::{self, Burst, Spark};
 use crate::ui::{Align, DynText, Mascot, Tone, Ui, mascot};
 
-pub const SIZE: (f32, f32) = (700.0, 866.0);
+pub const SIZE: (f32, f32) = (700.0, 940.0);
 pub const TAG_PANEL_FX: u64 = 4 << 40;
 
 const M: f32 = 24.0;
@@ -49,6 +49,7 @@ pub enum Setting {
     ScrollBrightness,
     Downloads,
     Bluetooth,
+    Shelf,
     Sound,
     Language,
     Login,
@@ -86,6 +87,7 @@ pub fn value(cfg: &Config, s: Setting) -> usize {
         Setting::ScrollBrightness => cfg.media.scroll_brightness as usize,
         Setting::Downloads => cfg.downloads.enabled as usize,
         Setting::Bluetooth => cfg.bluetooth.enabled as usize,
+        Setting::Shelf => cfg.shelf.enabled as usize,
         Setting::Sound => cfg.timer.sound as usize,
         Setting::Language => (cfg.language == Lang::En) as usize,
         Setting::Login => cfg.launch_at_login as usize,
@@ -395,7 +397,7 @@ impl Settings {
         let full = SIZE.0 - 2.0 * M;
         let gy = left_bottom.max(y) + 18.0;
         let act_h = 74.0;
-        let y = self.section(&ui, left, gy, full, t(lang, Text::SecGeneral), ROW + act_h + 60.0)?;
+        let y = self.section(&ui, left, gy, full, t(lang, Text::SecGeneral), ROW + 2.0 * act_h + 60.0)?;
         let row = Rect::new(left, y, COL, ROW);
         self.label(&ui, row, t(lang, Text::Language))?;
         self.choice(&ui, Setting::Language, Rect::new(row.x + COL - INNER - 176.0, row.y + 7.0, 176.0, 32.0), &["Indonesia", "English"], value(cfg, Setting::Language))?;
@@ -404,6 +406,9 @@ impl Settings {
         self.divider(&ui, left, y, full)?;
         self.toggle(&ui, Setting::Downloads, Rect::new(left, y, COL, act_h), t(lang, Text::DownloadsCard), Some(t(lang, Text::DownloadsDesc)), cfg)?;
         self.toggle(&ui, Setting::Bluetooth, Rect::new(right, y, COL, act_h), t(lang, Text::BtCard), Some(t(lang, Text::BtDesc)), cfg)?;
+        let y = y + act_h;
+        self.divider(&ui, left, y, full)?;
+        self.toggle(&ui, Setting::Shelf, Rect::new(left, y, COL, act_h), t(lang, Text::ShelfTitle), Some(t(lang, Text::ShelfDesc)), cfg)?;
         let y = y + act_h;
         self.divider(&ui, left, y, full)?;
         let adv = Rect::new(left, y, full, 60.0);

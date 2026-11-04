@@ -4,6 +4,7 @@ pub mod audio;
 pub mod bluetooth;
 pub mod brightness;
 pub mod comp;
+pub mod dragdrop;
 pub mod fswatch;
 pub mod gfx;
 pub mod media;
