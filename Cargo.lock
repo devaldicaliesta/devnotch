@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "notchi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "embed-manifest",
  "notchi-core",
@@ -42,14 +42,14 @@ dependencies = [
 
 [[package]]
 name = "notchi-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "toml",
 ]
 
 [[package]]
 name = "notchi-island"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "notchi-core",
  "notchi-platform-win",
@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "notchi-platform-win"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "notchi-core",
  "windows",
