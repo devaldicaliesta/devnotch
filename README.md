@@ -1,38 +1,53 @@
 # Notchi
 
-Island interaktif, menu bar, dan Dock bergaya macOS untuk Windows 11, ditulis dengan Rust agar ringan.
+Island interaktif bergaya macOS untuk Windows 11: pil kecil di tepi atas layar yang menampilkan musik, timer, unduhan, perangkat Bluetooth, dan lainnya, ditemani maskot bernama **Notchi**. Ditulis dengan Rust, ringan (sekitar 0% CPU dan beberapa MB RAM saat diam), tanpa telemetri.
 
-> **Status:** Island Fase 1 sudah berjalan (Rust): perilaku Otomatis/Menempel/Sembunyi, jendela Pengaturan (`Notchi.exe --settings`), gaya Neumorphism, Clay 3D, Kaca (glass), dan Klasik dengan tema terang/gelap (**Pengaturan → Tema**, default mengikuti Windows), maskot interaktif, partikel, serta lirik tersinkron opsional dari LRCLIB. Sejak v0.2.0: peek interaktif saat notch di-hover (jam, tanggal, baterai, maskot; atau judul lagu dan putar/jeda), Island menyingkir dari tab browser, seek di bilah progres, klik tengah untuk putar/jeda, scroll untuk mengatur timer, dan indikator mikrofon/kamera. Sejak v0.2.1: Island bisa dipindah ke kiri atau kanan atas (**Pengaturan → Posisi**, atau seret pil ke kiri/kanan), dan zona hover-nya kecil secara default (**Pengaturan → Zona hover**) agar tidak muncul saat memilih tab browser. Saat di samping, maskot kecil bisa ikut menemani di tepi atas (**Pengaturan → Maskot di samping**) dengan mata yang mengikuti kursor. Sejak v0.5.0: pil unduhan browser dengan alert selesai, alert perangkat Bluetooth (dengan baterai bila dilaporkan), dan Shift + scroll untuk kecerahan layar. Sejak v0.6.0: rak berkas (seret berkas ke Island, lalu seret keluar ke aplikasi lain) dan blur acrylic untuk gaya Kaca. Dock dan menu bar belum. Dokumen acuannya ada di [`docs/PRD.md`](docs/PRD.md).
+[**⬇ Unduh versi terbaru**](https://github.com/devaldicaliesta/devnotch/releases/latest) · [Catatan rilis](docs/rilis) · [Dukung pengembangan](https://yapp.ink/ImDev)
 
-## Unduh
+## Fitur
 
-Exe portabel tersedia di [GitHub Releases](https://github.com/devaldicaliesta/devnotch/releases/latest): unduh `Notchi-<versi>-windows-x64.exe`, lalu jalankan. Tidak perlu instalasi atau hak admin. Butuh Windows 11 22H2 atau lebih baru (x64).
+- **Media**: judul, artis, sampul, progres yang bisa di-seek, dan tombol putar/jeda untuk Spotify, YouTube Music, Apple Music, atau pemutar apa pun yang memakai kontrol media Windows. Ada lirik tersinkron opsional (LRCLIB).
+- **Timer dan stopwatch**: preset cepat; scroll di atas pil untuk menambah atau mengurangi menit.
+- **Unduhan**: progres unduhan browser, dan alert saat selesai yang membuka berkasnya di Explorer.
+- **Rak berkas**: seret berkas ke Island untuk disimpan sementara, lalu seret keluar ke folder, WhatsApp, email, atau aplikasi lain.
+- **Alert sistem**: pengisian daya, baterai rendah, perangkat Bluetooth tersambung/terputus (dengan baterai), dan indikator mikrofon/kamera.
+- **Volume dan kecerahan**: scroll di atas pil untuk volume, Shift + scroll untuk kecerahan layar.
+- **Tampilan**: gaya Neumorphism, Clay 3D, Kaca (blur acrylic), atau Klasik, dengan tema terang/gelap yang mengikuti Windows. Island bisa di tengah, kiri, atau kanan, dan bisa diseret.
+- **Maskot**: ekspresinya mengikuti aktivitas, matanya mengikuti kursor, dan bisa di-boop.
 
-Setiap tag `v*` memicu workflow [`release.yml`](.github/workflows/release.yml), yang menguji, membangun, lalu melampirkan exe, zip, dan `SHA256SUMS.txt` ke rilisnya.
+## Mulai
 
-## Rencana singkat
+1. Unduh `Notchi-<versi>-windows-x64.exe` dari [Releases](https://github.com/devaldicaliesta/devnotch/releases/latest) lalu jalankan. Tidak perlu instalasi atau hak admin.
+2. Butuh Windows 11 22H2 atau lebih baru (x64). Exe belum bertanda tangan digital; bila SmartScreen muncul, pilih **Info selengkapnya → Tetap jalankan**.
 
-- **Island lebih dulu** (Fase 1–2): pil interaktif di tengah atas layar untuk musik/video (termasuk YouTube Music dan Apple Music), timer, pengisian daya, notifikasi, dan lainnya, dengan maskot orisinal yang juga bernama **Notchi**.
-- **Dock dan menu bar** menyusul (Fase 3), lalu panel kontrol cepat dan launcher (Fase 4).
-- Hanya **Windows 11 22H2 ke atas**.
-- Dikemas sebagai **MSIX** (untuk notifikasi) dan sebagai `.exe` portabel.
-- Target: ≤ 60 MB RAM dan ≤ 0,3% CPU saat idle, tanpa hak admin, tanpa telemetri. Terukur pada Island Fase 1: 0% CPU dan 1–3 MB private working set saat diam.
+| Aksi | Hasil |
+| --- | --- |
+| Hover | Jam, tanggal, dan baterai; atau lagu yang diputar |
+| Klik / tahan | Buka atau tutup kartu |
+| Klik kanan | Menu: timer, perilaku, sembunyikan 1 jam, **Pengaturan** |
+| Seret pil ke kiri/kanan | Pindahkan Island di sepanjang tepi atas |
+| `Ctrl+Alt+N` | Buka/tutup tanpa mouse (bisa diubah) |
 
-## Gratis dan sumber terbuka
+**Perilaku** di Pengaturan: *Otomatis* (masuk ke tepi dan muncul saat kursor ditahan di tepi atas), *Menempel* (selalu tampil), atau *Sembunyi* (hanya saat ada aktivitas).
 
-- Kode: [Apache 2.0](LICENSE) (lihat juga [NOTICE](NOTICE)). Rilis hingga v0.5.0 berlisensi MIT.
-- Aset seni dan maskot: CC BY 4.0, lihat [`LICENSE-ASSETS.md`](LICENSE-ASSETS.md).
-- Nama dan logo: lihat [`TRADEMARKS.md`](TRADEMARKS.md).
-- Tanpa iklan, tanpa telemetri, tanpa fitur berbayar.
+Semua pengaturan tersimpan di `%APPDATA%\Notchi\config.toml` dan dimuat ulang otomatis saat berkas disimpan. Log ada di `%LOCALAPPDATA%\Notchi\notchi.log`.
 
-## Dukung pengembangan
+## Membangun dari sumber
 
-Notchi gratis. Bila bermanfaat, Anda bisa mendukung pengembangannya lewat [yapp.ink/ImDev](https://yapp.ink/ImDev).
+```powershell
+cargo build --release -p notchi
+```
 
-## Penafian
+Toolchain Rust dipasang otomatis dari `rust-toolchain.toml`. Hasilnya ada di `target\release\Notchi.exe`. Arsitektur dan rencana produk ada di [`docs/PRD.md`](docs/PRD.md), panduan untuk kontributor dan agen AI di [`CONTRIBUTING.md`](CONTRIBUTING.md) dan [`AGENTS.md`](AGENTS.md).
 
-Notchi tidak berafiliasi dengan, disponsori, atau didukung oleh Apple, Microsoft, Google, atau OpenAI. Semua nama dan merek dagang adalah milik pemiliknya masing-masing dan hanya disebut secara deskriptif.
+## Rencana
 
-## Berkontribusi
+Island sudah berjalan. Berikutnya: notifikasi aplikasi (paket MSIX), lalu Dock dan menu bar, panel kontrol cepat, dan launcher.
 
-Lihat [`CONTRIBUTING.md`](CONTRIBUTING.md). Laporan keamanan: [`SECURITY.md`](SECURITY.md).
+## Lisensi
+
+- Kode: [Apache 2.0](LICENSE) (lihat [NOTICE](NOTICE)). Rilis hingga v0.5.0 berlisensi MIT.
+- Maskot dan aset seni: CC BY 4.0 ([`LICENSE-ASSETS.md`](LICENSE-ASSETS.md)). Nama dan logo: [`TRADEMARKS.md`](TRADEMARKS.md).
+- Gratis, tanpa iklan, tanpa telemetri, tanpa fitur berbayar. Bila bermanfaat, dukung lewat [yapp.ink/ImDev](https://yapp.ink/ImDev).
+
+Notchi tidak berafiliasi dengan Apple, Microsoft, Google, atau OpenAI; nama dan merek dagang disebut secara deskriptif. Laporan keamanan: [`SECURITY.md`](SECURITY.md).
