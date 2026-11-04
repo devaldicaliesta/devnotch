@@ -25,6 +25,10 @@ Setiap tag `v*` memicu workflow [`release.yml`](.github/workflows/release.yml), 
 - Nama dan logo: lihat [`TRADEMARKS.md`](TRADEMARKS.md).
 - Tanpa iklan, tanpa telemetri, tanpa fitur berbayar.
 
+## Dukung pengembangan
+
+Notchi gratis. Bila bermanfaat, Anda bisa mendukung pengembangannya lewat [yapp.ink/ImDev](https://yapp.ink/ImDev).
+
 ## Penafian
 
 Notchi tidak berafiliasi dengan, disponsori, atau didukung oleh Apple, Microsoft, Google, atau OpenAI. Semua nama dan merek dagang adalah milik pemiliknya masing-masing dan hanya disebut secara deskriptif.
