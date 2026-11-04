@@ -12,7 +12,7 @@ use notchi_core::privacy::Privacy;
 use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_CLOAKED, DWMWA_EXCLUDED_FROM_PEEK, DWMWA_EXTENDED_FRAME_BOUNDS,
-    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_USE_HOSTBACKDROPBRUSH, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
     DwmGetWindowAttribute, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -377,6 +377,8 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
         let yes = BOOL(1);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &yes as *const _ as *const c_void, 4);
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_EXCLUDED_FROM_PEEK, &yes as *const _ as *const c_void, 4);
+        // Izinkan brush host backdrop (blur acrylic dari isi di belakang jendela) untuk gaya Kaca.
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_HOSTBACKDROPBRUSH, &yes as *const _ as *const c_void, 4);
 
         let state = Box::new(WindowState {
             handler: RefCell::new(None),

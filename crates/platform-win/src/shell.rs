@@ -32,8 +32,7 @@ pub fn animations_enabled() -> bool {
     !ok || on.as_bool()
 }
 
-/// Windows memakai tema terang untuk aplikasi (Pengaturan → Personalisasi → Warna).
-pub fn apps_use_light_theme() -> bool {
+fn personalize_dword(name: windows_core::PCWSTR) -> Option<u32> {
     use windows::Win32::System::Registry::{RRF_RT_REG_DWORD, RegGetValueW};
     let mut value = 0u32;
     let mut size = size_of::<u32>() as u32;
@@ -41,14 +40,24 @@ pub fn apps_use_light_theme() -> bool {
         RegGetValueW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("AppsUseLightTheme"),
+            name,
             RRF_RT_REG_DWORD,
             None,
             Some(&mut value as *mut u32 as *mut _),
             Some(&mut size),
         )
     };
-    r == ERROR_SUCCESS && value != 0
+    (r == ERROR_SUCCESS).then_some(value)
+}
+
+/// Windows memakai tema terang untuk aplikasi (Pengaturan → Personalisasi → Warna).
+pub fn apps_use_light_theme() -> bool {
+    personalize_dword(w!("AppsUseLightTheme")).is_some_and(|v| v != 0)
+}
+
+/// "Efek transparansi" Windows aktif. Tanpanya blur acrylic tidak digambar oleh sistem.
+pub fn transparency_enabled() -> bool {
+    personalize_dword(w!("EnableTransparency")).is_none_or(|v| v != 0)
 }
 
 pub fn high_contrast() -> bool {

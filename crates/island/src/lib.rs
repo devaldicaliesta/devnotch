@@ -298,6 +298,7 @@ pub struct IslandApp {
     brightness: Option<Brightness>,
     brightness_acc: f32,
     brightness_warned: bool,
+    blur_on: bool,
 }
 
 impl std::fmt::Debug for IslandApp {
@@ -468,6 +469,7 @@ impl IslandApp {
             brightness: None,
             brightness_acc: 0.0,
             brightness_warned: false,
+            blur_on: false,
             cfg: Config::default(),
             cfg_text,
             warnings: Vec::new(),
@@ -616,12 +618,15 @@ impl IslandApp {
     /// dari Windows setiap kali pengaturan sistem berubah.
     fn refresh_theme(&mut self, force: bool) -> bool {
         let pal = theme::palette(self.cfg.style, resolve_mode(self.cfg.theme));
-        if !force && pal == self.ui.pal {
+        let blur = pal.style == Style::Glass && self.cfg.blur && shell::transparency_enabled();
+        if !force && pal == self.ui.pal && blur == self.blur_on {
             return false;
         }
         self.ui.pal = pal;
-        let _ = self.main.set_fill(&self.ui, pal.base);
-        let _ = self.bubble.set_fill(&self.ui, pal.base);
+        self.blur_on = blur;
+        let fill = if blur { pal.blur_tint() } else { pal.base };
+        let _ = self.main.set_blur(&self.ui, blur, fill);
+        let _ = self.bubble.set_blur(&self.ui, blur, fill);
         self.lip_tint = None;
         self.apply_liquid();
         self.key = None;
@@ -664,7 +669,7 @@ impl IslandApp {
             Event::Resized => {}
             Event::SettingsChanged => {
                 self.refresh_motion();
-                if self.cfg.theme == Theme::System && self.refresh_theme(false) {
+                if self.refresh_theme(false) {
                     self.sync_settings();
                 }
             }
@@ -1977,7 +1982,7 @@ impl IslandApp {
         let lip = if retracted { tint } else { None };
         if lip != self.lip_tint {
             self.lip_tint = lip;
-            let base = self.ui.pal.base;
+            let base = if self.blur_on { self.ui.pal.blur_tint() } else { self.ui.pal.base };
             let fill = lip.map_or(base, |c| c.with_opacity(LIP_TINT).over(base));
             self.main.set_fill(&self.ui, fill)?;
             if self.cfg.liquid {

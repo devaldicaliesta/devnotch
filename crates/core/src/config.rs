@@ -73,6 +73,8 @@ pub struct Config {
     pub island: IslandConfig,
     pub style: Style,
     pub theme: Theme,
+    /// Blur acrylic sungguhan untuk gaya Kaca (bila efek transparansi Windows aktif).
+    pub blur: bool,
     pub mascot: MascotConfig,
     pub media: MediaConfig,
     pub power: PowerConfig,
@@ -101,6 +103,7 @@ impl Default for Config {
             },
             style: Style::Neumorphism,
             theme: Theme::System,
+            blur: true,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
             media: MediaConfig {
                 enabled: true,
@@ -162,6 +165,9 @@ style = "neumorphism"
 # Tema warna: "system" mengikuti Windows (mode aplikasi terang/gelap),
 # "dark" selalu gelap, "light" selalu terang.
 theme = "system"
+# Gaya "glass" memakai blur acrylic dari isi di belakang pil, seperti macOS. Butuh
+# "Efek transparansi" Windows aktif; tanpanya, atau bila false, pil cukup tembus pandang.
+blur = true
 
 [mascot]
 enabled = true
@@ -364,7 +370,7 @@ pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
 
 const KNOWN: &[(&str, &[&str])] = &[
     ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "x", "position", "hover_zone", "side_mascot", "mode", "autohide", "top_margin"]),
-    ("appearance", &["style", "theme"]),
+    ("appearance", &["style", "theme", "blur"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "scroll_brightness", "paused_linger_seconds", "lyrics"]),
     ("downloads", &["enabled"]),
@@ -450,6 +456,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let style = r.parsed("appearance.style", d.style, |s| {
         Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", \"glass\", atau \"classic\"".into())
     });
+    let blur = r.bool("appearance.blur", d.blur);
     let theme = r.parsed("appearance.theme", d.theme, |s| {
         Theme::from_key(s).ok_or("harus \"system\", \"dark\", atau \"light\"".into())
     });
@@ -492,6 +499,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows, x, hover_zone, side_mascot },
         style,
         theme,
+        blur,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, scroll_brightness, paused_linger_seconds: linger, lyrics },
         downloads: DownloadsConfig { enabled: downloads_enabled },

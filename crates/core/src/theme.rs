@@ -284,6 +284,16 @@ impl Palette {
         self.mode == Mode::Light
     }
 
+    /// Isi pil di atas blur acrylic: lebih tembus pandang daripada `base` karena blur
+    /// sudah meredam latar yang ramai. Hanya berbeda untuk gaya Kaca.
+    pub fn blur_tint(&self) -> Color {
+        if self.style == Style::Glass {
+            self.base.with_opacity(self.base.a as f32 / 255.0 * 0.62)
+        } else {
+            self.base
+        }
+    }
+
     /// Warna pekat permukaan pil, untuk menghitung kontras.
     pub fn surface(&self) -> Color {
         self.base.over(self.backdrop)
@@ -440,6 +450,14 @@ mod tests {
         assert_eq!(Theme::Light.resolve(false), Mode::Light);
         assert_eq!(Theme::from_key("LIGHT"), Some(Theme::Light));
         assert_eq!(Theme::default(), Theme::System);
+    }
+
+    #[test]
+    fn tint_blur_lebih_tipis_hanya_untuk_kaca() {
+        let g = palette(Style::Glass, Mode::Dark);
+        assert!(g.blur_tint().a < g.base.a && g.blur_tint().a > 80);
+        let n = palette(Style::Neumorphism, Mode::Light);
+        assert_eq!(n.blur_tint(), n.base);
     }
 
     #[test]
