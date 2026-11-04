@@ -1,2 +1,8 @@
 /target
 *.pdb
+
+# Graphify: yang di-commit hanya GRAPH_REPORT.md dan graph.json.
+graphify-out/cache/
+graphify-out/graph.html
+graphify-out/manifest.json
+graphify-out/.graphify_*
