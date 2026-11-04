@@ -1,17 +1,17 @@
 # Graph Report - devnotch  (2026-11-04)
 
 ## Corpus Check
-- 73 files · ~66,608 words
+- 73 files · ~66,703 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 6 file(s) not represented in the graph (top: (none) 5, .toml 1)
 
 ## Summary
-- 2429 nodes · 4758 edges · 136 communities (102 shown, 34 thin omitted)
+- 2428 nodes · 4758 edges · 140 communities (103 shown, 37 thin omitted)
 - Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 170 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d817289b`
+- Built from commit: `3f3cda68`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -45,7 +45,7 @@
 - MediaCommand
 - lyrics.rs
 - State
-- HWND
+- .open
 - Color
 - Shape
 - TrayIcon
@@ -83,7 +83,7 @@
 - SpringPreset
 - PRD — Notchi: Island dan Dock untuk Windows 11 (Rust)
 - 5. Menu bar, panel kontrol, launcher, dan pengaturan
-- wndproc
+- .DragEnter
 - v0.1.0.md
 - v0.2.1.md
 - Notchi
@@ -91,7 +91,7 @@
 - platform-win/src/bluetooth.rs
 - open_run_key
 - init_process
-- 4. Fitur Dock (pengganti taskbar bawah, Fase 3)
+- Card
 - smoke.ps1
 - Artwork
 - Slot
@@ -115,18 +115,18 @@
 - Batch
 - Presentation
 - CompositionHost
-- timer.rs
+- wmi_step
 - Mengamankan repositori
 - .render
-- UiProxy
+- worker
 - Priority
-- Style
+- core/src/privacy.rs
 - LyricState
 - sembunyi_otomatis_ke_tepi_atas
-- MediaSnapshot
+- Backend
 - v0.5.0.md
 - log
-- BluetoothWatcher
+- 6. Arsitektur teknis (Rust)
 - v0.6.0.md
 - parse_ovh
 - 7. Keamanan dan privasi
@@ -135,9 +135,13 @@
 - v0.6.1.md
 - MouseButton
 - LyricStatus
+- Tone
 - TrayEvent
 - PANEL_EX
 - PANEL_STYLE
+- PrivacyDot
+- Berkontribusi
+- int_variant
 - v0.6.2.md
 
 ## God Nodes (most connected - your core abstractions)
@@ -155,19 +159,19 @@
 ## Surprising Connections (you probably didn't know these)
 - `EYE` --references--> `Color`  [EXTRACTED]
   crates/core/src/icon.rs → crates/core/src/color.rs
-- `BLACK` --references--> `Color`  [EXTRACTED]
-  crates/core/src/theme.rs → crates/core/src/color.rs
-- `INK` --references--> `Color`  [EXTRACTED]
-  crates/core/src/theme.rs → crates/core/src/color.rs
-- `NONE` --references--> `Color`  [EXTRACTED]
-  crates/core/src/theme.rs → crates/core/src/color.rs
-- `WHITE` --references--> `Color`  [EXTRACTED]
-  crates/core/src/theme.rs → crates/core/src/color.rs
+- `CAMERA_COLOR` --references--> `Color`  [EXTRACTED]
+  crates/core/src/privacy.rs → crates/core/src/color.rs
+- `MIC_COLOR` --references--> `Color`  [EXTRACTED]
+  crates/core/src/privacy.rs → crates/core/src/color.rs
+- `sparkle_colors()` --references--> `Color`  [EXTRACTED]
+  crates/island/src/fx.rs → crates/core/src/color.rs
+- `BLUSH` --references--> `Color`  [EXTRACTED]
+  crates/island/src/ui.rs → crates/core/src/color.rs
 
 ## Import Cycles
 - 1-file cycle: `crates/core/src/activity.rs -> crates/core/src/activity.rs`
 
-## Communities (136 total, 34 thin omitted)
+## Communities (140 total, 37 thin omitted)
 
 ### Community 0 - "window.rs"
 Cohesion: 0.01
@@ -175,7 +179,7 @@ Nodes (13): CLASS_NAME, MAX_Z_WALK, PANEL_CLASS, PANEL_MIN_DP, quit(), WM_APP_AP
 
 ### Community 2 - "views.rs"
 Cohesion: 0.05
-Nodes (34): download_detail(), download_short(), DownloadInfo, G_BLUETOOTH, G_BRIGHTNESS, G_CANCEL, G_CHEVRON, G_CLOCK (+26 more)
+Nodes (31): G_BLUETOOTH, G_BRIGHTNESS, G_CANCEL, G_CHEVRON, G_CLOCK, G_DELETE, G_DOWNLOAD, G_FILE (+23 more)
 
 ### Community 3 - "Text"
 Cohesion: 0.02
@@ -190,16 +194,12 @@ Cohesion: 0.06
 Nodes (49): bagian_bukan_tabel(), berkas_kosong_memakai_default(), berkas_terlalu_besar_ditolak(), BluetoothConfig, check_unknown(), Config, daftar_dibatasi(), DEFAULT_HOTKEY (+41 more)
 
 ### Community 7 - "island/src/lib.rs"
-Cohesion: 0.02
-Nodes (57): BRIGHTNESS_STEP, COLLAPSE_DELAY_MS, CONTENT_DELAY_MS, CONTENT_FADE_MS, COVER_SETTLE_MS, DOT, DOT_INSET, DOWNLOAD_DEBOUNCE_MS (+49 more)
-
-### Community 8 - "brightness.rs"
-Cohesion: 0.06
-Nodes (16): apply(), Backend, Ddc, None, Wmi, DDC_CACHE, ddc_read(), ddc_step() (+8 more)
+Cohesion: 0.03
+Nodes (56): BRIGHTNESS_STEP, COLLAPSE_DELAY_MS, CONTENT_DELAY_MS, CONTENT_FADE_MS, COVER_SETTLE_MS, DOT, DOT_INSET, DOWNLOAD_DEBOUNCE_MS (+48 more)
 
 ### Community 9 - "Ms"
-Cohesion: 0.15
-Nodes (12): Ms, ContentHold, Countdown, CountdownState, Paused, Running, HOUR_MS, LYRIC_LEAD_MS (+4 more)
+Cohesion: 0.10
+Nodes (20): Ms, ContentHold, batas_durasi(), Countdown, CountdownState, Paused, Running, hitung_mundur_dasar() (+12 more)
 
 ### Community 10 - "ActivityKind"
 Cohesion: 0.08
@@ -210,20 +210,20 @@ Cohesion: 0.06
 Nodes (38): anchor_px(), BUBBLE_GAP, BUDDY_MASCOT, COMPACT_MAX_W, COMPACT_MIN_W, corner_radius(), EXPANDED_MAX_H, EXPANDED_MIN_H (+30 more)
 
 ### Community 12 - "core/src/media.rs"
-Cohesion: 0.11
-Nodes (22): art_fingerprint(), laporan_baru_dan_lagu_baru_memakai_timeline_segar(), laporan_posisi_rutin_dibuang(), media_dijeda_bertahan_sebentar(), nama_sumber(), PlaybackStatus, Changing, Closed (+14 more)
+Cohesion: 0.08
+Nodes (27): art_fingerprint(), Controls, laporan_baru_dan_lagu_baru_memakai_timeline_segar(), laporan_posisi_rutin_dibuang(), media_dijeda_bertahan_sebentar(), MediaPresence, MediaSnapshot, nama_sumber() (+19 more)
 
 ### Community 13 - "Event"
-Cohesion: 0.07
-Nodes (28): Event, Bluetooth, BluetoothReady, BluetoothRemoved, Brightness, Close, DisplayChanged, DownloadsChanged (+20 more)
+Cohesion: 0.06
+Nodes (39): Event, Bluetooth, BluetoothReady, BluetoothRemoved, Brightness, Close, DisplayChanged, DownloadsChanged (+31 more)
 
 ### Community 14 - "Ui"
-Cohesion: 0.16
-Nodes (10): Rect, rect_contains_eksklusif_di_tepi_kanan(), burst(), Mascot, mascot(), Pill, Ui, waveform() (+2 more)
+Cohesion: 0.19
+Nodes (8): Rect, Mascot, mascot(), Pill, Ui, waveform(), v2(), v3()
 
 ### Community 15 - "Window"
 Cohesion: 0.07
-Nodes (6): colorref(), Handler, OwnedWindow, set_caption(), Window, WindowState
+Nodes (4): Handler, OwnedWindow, Window, WindowState
 
 ### Community 16 - "net.rs"
 Cohesion: 0.07
@@ -243,11 +243,11 @@ Nodes (29): concurrency, cancel-in-progress, group, run, CARGO_TERM_COLOR, GH_TO
 
 ### Community 21 - "Setting"
 Cohesion: 0.08
-Nodes (26): Action, Setting, Advanced, AvoidWindows, Behavior, Bluetooth, Boop, Downloads (+18 more)
+Nodes (25): Setting, Advanced, AvoidWindows, Behavior, Bluetooth, Boop, Downloads, Fullscreen (+17 more)
 
 ### Community 22 - "HWND"
-Cohesion: 0.16
-Nodes (11): main(), create_overlay(), error_box(), fill_menu(), MenuItem, Item, Separator, Submenu (+3 more)
+Cohesion: 0.11
+Nodes (16): main(), arrange_event_proc(), create_overlay(), error_box(), fill_menu(), frame_bounds(), is_app_window(), is_desktop() (+8 more)
 
 ### Community 23 - "steps"
 Cohesion: 0.07
@@ -258,56 +258,52 @@ Cohesion: 0.13
 Nodes (3): d2d_color(), Gfx, Surface
 
 ### Community 25 - "platform-win/src/media.rs"
-Cohesion: 0.09
-Nodes (9): MAX_ART_BYTES, COMMAND_SETTLE_MS, HOLD_MS, next_command(), POSITION_TOLERANCE_MS, Props, read_props(), read_thumbnail() (+1 more)
+Cohesion: 0.10
+Nodes (8): MAX_ART_BYTES, COMMAND_SETTLE_MS, HOLD_MS, POSITION_TOLERANCE_MS, Props, read_props(), read_thumbnail(), TRACK_SETTLE_MS
 
 ### Community 26 - "MediaCommand"
-Cohesion: 0.12
-Nodes (13): MediaCommand, CurrentChanged, CycleSession, Next, Prev, Quick, Refresh, Seek (+5 more)
+Cohesion: 0.10
+Nodes (15): SourceFilter, Brightness, MediaCommand, CurrentChanged, CycleSession, Next, Prev, Quick (+7 more)
 
 ### Community 27 - "lyrics.rs"
 Cohesion: 0.15
 Nodes (18): bare_title(), clean_artist(), clean_title(), clip(), DURATION_SLACK_MS, indeks_dan_pergantian_tersinkron(), judul_dibersihkan(), lrc_dasar_dan_offset() (+10 more)
 
 ### Community 29 - "State"
-Cohesion: 0.17
-Nodes (9): RawTimeline, SourceFilter, aumid(), play_pause(), run(), State, status_of(), Subscribed (+1 more)
+Cohesion: 0.19
+Nodes (7): aumid(), next_command(), play_pause(), run(), State, status_of(), Subscribed
 
-### Community 30 - "HWND"
-Cohesion: 0.18
-Nodes (8): scale_for_dpi(), skala_dpi(), arrange_event_proc(), frame_bounds(), is_app_window(), is_desktop(), mouse_point(), win_event_proc()
+### Community 30 - ".open"
+Cohesion: 0.23
+Nodes (7): rect_contains_eksklusif_di_tepi_kanan(), scale_for_dpi(), skala_dpi(), create_hicon(), create_panel(), IconImage, mouse_point()
 
 ### Community 31 - "Color"
-Cohesion: 0.14
-Nodes (14): AA, accent_alert(), accent_charging(), Color, ISLAND_BG, kontras_hitam_putih_21(), semua_token_lulus_wcag_aa_di_atas_hitam(), STATUS_CRITICAL (+6 more)
+Cohesion: 0.13
+Nodes (16): AA, accent_alert(), accent_charging(), Color, ISLAND_BG, kontras_hitam_putih_21(), semua_token_lulus_wcag_aa_di_atas_hitam(), STATUS_CRITICAL (+8 more)
 
 ### Community 32 - "Shape"
 Cohesion: 0.28
 Nodes (14): bibir_dan_zona_dekat(), compact_size(), hit_box(), minimal_terpusat_dengan_gelembung(), near_zone(), pil_merapat_ke_tepi_tanpa_terpotong(), pill_center(), region_diam_pas_dengan_pil() (+6 more)
 
-### Community 33 - "TrayIcon"
-Cohesion: 0.16
-Nodes (4): create_hicon(), create_panel(), IconImage, TrayIcon
-
 ### Community 34 - "Model"
-Cohesion: 0.23
-Nodes (25): t(), ShelfItem, battery_badge(), build_alert(), build_bubble(), build_buddy(), build_compact(), build_download_card() (+17 more)
+Cohesion: 0.24
+Nodes (23): ShelfItem, battery_badge(), build_alert(), build_bubble(), build_buddy(), build_compact(), build_download_card(), build_home_card() (+15 more)
 
 ### Community 35 - "Json"
 Cohesion: 0.20
 Nodes (8): Json, Arr, Bool, Null, Num, Obj, Str, Parser
 
 ### Community 36 - "fx.rs"
-Cohesion: 0.11
-Nodes (10): Burst, Confetti, Pop, Sparkle, EASE_OUT, GRAVITY, Rng, SOFT (+2 more)
+Cohesion: 0.12
+Nodes (11): Burst, burst(), Confetti, Pop, Sparkle, EASE_OUT, GRAVITY, Rng (+3 more)
 
 ### Community 37 - "Placement"
 Cohesion: 0.12
 Nodes (9): HoverZone, .ALL, Normal, Small, Placement, .ALL, Center, Left (+1 more)
 
 ### Community 40 - "ViewKind"
-Cohesion: 0.10
-Nodes (22): Card, Download, Home, Lyrics, Media, Shelf, Stopwatch, Timer (+14 more)
+Cohesion: 0.16
+Nodes (14): PeekKind, Idle, Media, slot_of(), ViewKind, Alert, Buddy, Card (+6 more)
 
 ### Community 41 - "TextStyle"
 Cohesion: 0.14
@@ -330,16 +326,20 @@ Cohesion: 0.17
 Nodes (13): encode_component(), from_record(), Line, Lyrics, pick(), pilih_dari_lrclib(), Query, url_dikodekan() (+5 more)
 
 ### Community 48 - "README.md"
-Cohesion: 0.17
-Nodes (8): Alur kontribusi, Aturan dasar, Berkontribusi, Lisensi aset, Cakupan, Kebijakan keamanan, Melaporkan kerentanan, Kebijakan nama dan logo
+Cohesion: 0.23
+Nodes (5): Lisensi aset, Cakupan, Kebijakan keamanan, Melaporkan kerentanan, Kebijakan nama dan logo
 
 ### Community 49 - "Lang"
-Cohesion: 0.20
-Nodes (12): bahasa(), DAYS_EN, DAYS_ID, decimal(), Lang, En, Id, long_date() (+4 more)
+Cohesion: 0.16
+Nodes (18): bahasa(), DAYS_EN, DAYS_ID, decimal(), Lang, En, Id, long_date() (+10 more)
 
 ### Community 50 - "dragdrop.rs"
-Cohesion: 0.07
-Nodes (10): accept(), data_object(), drag_out(), DRAGGING_OUT, files_of(), has_files(), hdrop_format(), Pidls (+2 more)
+Cohesion: 0.08
+Nodes (8): data_object(), drag_out(), DRAGGING_OUT, files_of(), has_files(), hdrop_format(), Pidls, ShelfTarget
+
+### Community 51 - "fswatch.rs"
+Cohesion: 0.16
+Nodes (3): register(), watch_dir(), UiProxy
 
 ### Community 52 - "HKEY"
 Cohesion: 0.24
@@ -350,8 +350,8 @@ Cohesion: 0.17
 Nodes (8): buang_yang_hilang(), dibatasi_dan_yang_lama_dibuang(), Item, MAX_ITEMS, pb(), same(), Shelf, tambah_tanpa_duplikat()
 
 ### Community 54 - "Style"
-Cohesion: 0.17
-Nodes (8): Mode, Dark, Light, Theme, .ALL, Dark, Light, System
+Cohesion: 0.12
+Nodes (11): Style, .ALL, Classic, Clay, Glass, Neumorphism, Theme, .ALL (+3 more)
 
 ### Community 55 - "PowerReading"
 Cohesion: 0.15
@@ -374,8 +374,8 @@ Cohesion: 0.25
 Nodes (7): Baru, Catatan, Island tidak lagi menghalangi tab browser, Pemutaran media, Perbaikan, Persyaratan, Unduhan
 
 ### Community 61 - "fmt.rs"
-Cohesion: 0.36
-Nodes (7): clock(), countdown(), elapsed(), format_berlalu(), format_hitung_mundur(), format_ukuran(), rate()
+Cohesion: 0.31
+Nodes (8): clock(), countdown(), elapsed(), format_berlalu(), format_hitung_mundur(), format_ukuran(), rate(), timer_text()
 
 ### Community 62 - "2. Spesifikasi visual dan catatan legal"
 Cohesion: 0.29
@@ -394,16 +394,12 @@ Cohesion: 0.16
 Nodes (10): bouncy_memantul_sekali(), rumus_sesuai_prd(), semua_preset_selesai_dalam_400_ms(), smooth_tidak_melampaui_target(), Spring, SpringPreset, .BOUNCY, .SMOOTH (+2 more)
 
 ### Community 66 - "PRD — Notchi: Island dan Dock untuk Windows 11 (Rust)"
-Cohesion: 0.17
-Nodes (12): 1. Ringkasan, tujuan, dan metrik, 6.1 Keputusan arsitektur, 6.2 Struktur workspace, 6.3 Model thread, 6.4 Aturan render hemat, 6.5 Diagram arsitektur, 6. Arsitektur teknis (Rust), 8.1 Anggaran sumber daya (+4 more)
+Cohesion: 0.18
+Nodes (11): 1. Ringkasan, tujuan, dan metrik, 4.1 Strategi terhadap taskbar Windows, 4.2 Fitur, 4.3 Batasan yang harus diterima, 4.4 Kriteria penerimaan Dock, 4. Fitur Dock (pengganti taskbar bawah, Fase 3), 8.1 Anggaran sumber daya, 8.2 Kompatibilitas dan kasus tepi (+3 more)
 
 ### Community 67 - "5. Menu bar, panel kontrol, launcher, dan pengaturan"
 Cohesion: 0.33
 Nodes (6): 5.1 Menu bar, 5.2 Panel kontrol cepat, 5.3 Launcher ala Spotlight, 5.4 Pengaturan, 5.5 Kriteria penerimaan, 5. Menu bar, panel kontrol, launcher, dan pengaturan
-
-### Community 68 - "wndproc"
-Cohesion: 0.17
-Nodes (11): DpiChanged, FullscreenHint, Key, MouseDown, MouseMove, MouseUp, ShiftWheel, Timer (+3 more)
 
 ### Community 70 - "v0.1.0.md"
 Cohesion: 0.33
@@ -414,16 +410,16 @@ Cohesion: 0.33
 Nodes (5): Baru, Catatan, Perbaikan, Persyaratan, Unduhan
 
 ### Community 72 - "Notchi"
-Cohesion: 0.29
-Nodes (7): Berkontribusi, Dukung pengembangan, Gratis dan sumber terbuka, Notchi, Penafian, Rencana singkat, Unduh
+Cohesion: 0.33
+Nodes (6): Fitur, Lisensi, Membangun dari sumber, Mulai, Notchi, Rencana
 
 ### Community 73 - "cli"
 Cohesion: 0.40
 Nodes (4): cli(), config_path(), reset_config(), attach_parent_console()
 
 ### Community 74 - "platform-win/src/bluetooth.rs"
-Cohesion: 0.13
-Nodes (5): BATTERY, CLASSIC, CONNECTED, LE, props_of()
+Cohesion: 0.10
+Nodes (6): BATTERY, BluetoothWatcher, CLASSIC, CONNECTED, LE, props_of()
 
 ### Community 75 - "open_run_key"
 Cohesion: 0.40
@@ -433,9 +429,9 @@ Nodes (3): launch_at_login_enabled(), open_run_key(), set_launch_at_login()
 Cohesion: 0.40
 Nodes (3): Hardening, init_process(), set_policy()
 
-### Community 77 - "4. Fitur Dock (pengganti taskbar bawah, Fase 3)"
-Cohesion: 0.40
-Nodes (5): 4.1 Strategi terhadap taskbar Windows, 4.2 Fitur, 4.3 Batasan yang harus diterima, 4.4 Kriteria penerimaan Dock, 4. Fitur Dock (pengganti taskbar bawah, Fase 3)
+### Community 77 - "Card"
+Cohesion: 0.25
+Nodes (8): Card, Download, Home, Lyrics, Media, Shelf, Stopwatch, Timer
 
 ### Community 78 - "smoke.ps1"
 Cohesion: 0.60
@@ -454,16 +450,16 @@ Cohesion: 0.33
 Nodes (5): apps_use_light_theme(), personalize_dword(), RUN_KEY, RUN_VALUE, transparency_enabled()
 
 ### Community 86 - "theme.rs"
-Cohesion: 0.16
-Nodes (13): aksen_tetap_terbaca_di_tema_terang(), all(), BLACK, INK, kaca_tembus_pandang(), klasik_datar_tanpa_bayangan(), NONE, on_color() (+5 more)
+Cohesion: 0.18
+Nodes (12): aksen_tetap_terbaca_di_tema_terang(), all(), kaca_tembus_pandang(), klasik_datar_tanpa_bayangan(), Mode, Dark, Light, on_color() (+4 more)
 
 ### Community 87 - "comp.rs"
 Cohesion: 0.12
 Nodes (3): boxed_f32(), LOOP_BUDGET_MS, REDUCED_MS
 
 ### Community 88 - "ui.rs"
-Cohesion: 0.11
-Nodes (13): Align, Center, Left, Right, BLUSH, DynText, EYE, OVERLAP (+5 more)
+Cohesion: 0.14
+Nodes (9): Align, Center, Left, Right, BLUSH, DynText, EYE, OVERLAP (+1 more)
 
 ### Community 89 - "v0.4.0.md"
 Cohesion: 0.33
@@ -482,8 +478,8 @@ Cohesion: 0.31
 Nodes (4): Palette, Relief, shade(), tint()
 
 ### Community 93 - "Config"
-Cohesion: 0.16
-Nodes (4): behavior_desc(), Look, Settings, value()
+Cohesion: 0.14
+Nodes (4): Action, Look, Settings, value()
 
 ### Community 94 - "Behavior"
 Cohesion: 0.25
@@ -509,9 +505,9 @@ Nodes (3): cursor_pos(), Monitor, primary_monitor()
 Cohesion: 0.29
 Nodes (7): Presentation, Alert, Compact, Expanded, Hidden, Idle, Minimal
 
-### Community 103 - "timer.rs"
-Cohesion: 0.20
-Nodes (9): batas_durasi(), hitung_mundur_dasar(), jeda_dan_lanjut(), kurangi_lewat_scroll_tidak_menamatkan_timer(), MAX_COUNTDOWN, Stopwatch, stopwatch(), tambah_satu_menit() (+1 more)
+### Community 103 - "wmi_step"
+Cohesion: 0.52
+Nodes (4): prop(), wmi_first(), wmi_get(), wmi_step()
 
 ### Community 104 - "Mengamankan repositori"
 Cohesion: 0.33
@@ -521,29 +517,33 @@ Nodes (6): 1. Impor aturan cabang `main`, 2. Impor aturan tag rilis, 3. Pengatur
 Cohesion: 0.14
 Nodes (8): Content, IslandApp, lyric_key(), lyric_timing(), Ready, query_of(), rect_union(), ViewKey
 
-### Community 106 - "UiProxy"
-Cohesion: 0.36
-Nodes (4): Brightness, worker(), register(), UiProxy
+### Community 106 - "worker"
+Cohesion: 0.29
+Nodes (5): apply(), ddc_read(), ddc_step(), with_monitors(), worker()
 
 ### Community 107 - "Priority"
 Cohesion: 0.33
 Nodes (6): Priority, P0, P1, P2, P3, P4
 
-### Community 108 - "Style"
-Cohesion: 0.25
-Nodes (6): Style, .ALL, Classic, Clay, Glass, Neumorphism
+### Community 108 - "core/src/privacy.rs"
+Cohesion: 0.40
+Nodes (4): CAMERA_COLOR, in_use(), MIC_COLOR, sedang_dipakai_bila_berhenti_lebih_lama_dari_mulai()
 
 ### Community 109 - "LyricState"
 Cohesion: 0.40
 Nodes (5): LyricState, Loading, Missing, Offline, Ready
 
-### Community 111 - "MediaSnapshot"
-Cohesion: 0.26
-Nodes (3): Controls, MediaPresence, MediaSnapshot
+### Community 111 - "Backend"
+Cohesion: 0.40
+Nodes (6): Backend, Ddc, None, Wmi, open(), wmi_open()
 
 ### Community 112 - "v0.5.0.md"
 Cohesion: 0.50
 Nodes (3): Baru, Catatan, Unduhan
+
+### Community 115 - "6. Arsitektur teknis (Rust)"
+Cohesion: 0.33
+Nodes (6): 6.1 Keputusan arsitektur, 6.2 Struktur workspace, 6.3 Model thread, 6.4 Aturan render hemat, 6.5 Diagram arsitektur, 6. Arsitektur teknis (Rust)
 
 ### Community 116 - "v0.6.0.md"
 Cohesion: 0.40
@@ -569,9 +569,17 @@ Nodes (4): MouseButton, Left, Middle, Right
 Cohesion: 0.33
 Nodes (5): LyricSlot, LyricStatus, Loading, Missing, Offline
 
+### Community 131 - "Tone"
+Cohesion: 0.50
+Nodes (4): Tone, Disabled, Neutral, Tinted
+
 ### Community 132 - "TrayEvent"
 Cohesion: 0.67
 Nodes (3): TrayEvent, Click, Menu
+
+### Community 136 - "Berkontribusi"
+Cohesion: 0.67
+Nodes (3): Alur kontribusi, Aturan dasar, Berkontribusi
 
 ### Community 142 - "v0.6.2.md"
 Cohesion: 0.50
@@ -579,23 +587,23 @@ Nodes (3): Lainnya, Perbaikan, Unduhan
 
 ## Knowledge Gaps
 - **309 isolated node(s):** `Download`, `Media`, `Privacy`, `Shelf`, `Stopwatch` (+304 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1221 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **34 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1219 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **37 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Text` connect `Text` to `Lang`, `Model`?**
-  _High betweenness centrality (0.098) - this node is a cross-community bridge._
+- **Why does `Text` connect `Text` to `Lang`?**
+  _High betweenness centrality (0.137) - this node is a cross-community bridge._
 - **What connects `Download`, `Media`, `Privacy` to the rest of the system?**
   _309 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `window.rs` be split into smaller, more focused modules?**
   _Cohesion score 0.01015228426395939 - nodes in this community are weakly interconnected._
-- **Why does `UiProxy` connect `UiProxy` to `window.rs`, `island/src/lib.rs`, `brightness.rs`, `Event`, `Ui`, `Window`, `settings.rs`, `platform-win/src/media.rs`, `State`, `HWND`, `TrayIcon`, `fx.rs`, `platform-win/src/privacy.rs`, `dragdrop.rs`, `fswatch.rs`, `HKEY`, `.handle`, `platform-win/src/bluetooth.rs`, `comp.rs`, `Config`, `Batch`, `.render`, `BluetoothWatcher`?**
-  _High betweenness centrality (0.075) - this node is a cross-community bridge._
+- **Why does `IslandApp` connect `.render` to `.show_menu`, `LyricStatus`, `config.rs`, `island/src/lib.rs`, `PrivacyDot`, `Ms`, `ActivityKind`, `core/src/media.rs`, `Ui`, `Window`, `Point`, `MediaCommand`, `Color`, `Shape`, `TrayIcon`, `ViewKind`, `DeviceKind`, `Button`, `result`, `Lyrics`, `Lang`, `fswatch.rs`, `HKEY`, `Shelf`, `PowerReading`, `downloads.rs`, `.handle`, `platform-win/src/bluetooth.rs`, `Artwork`, `Island`, `Config`, `.layout_window`, `CompositionHost`, `log`?**
+  _High betweenness centrality (0.084) - this node is a cross-community bridge._
 - **Should `views.rs` be split into smaller, more focused modules?**
-  _Cohesion score 0.05094130675526024 - nodes in this community are weakly interconnected._
-- **Why does `IslandApp` connect `.render` to `.show_menu`, `LyricStatus`, `views.rs`, `config.rs`, `island/src/lib.rs`, `Ms`, `ActivityKind`, `Ui`, `Window`, `Point`, `MediaCommand`, `Color`, `Shape`, `TrayIcon`, `ViewKind`, `DeviceKind`, `Button`, `result`, `Lyrics`, `HKEY`, `Shelf`, `PowerReading`, `downloads.rs`, `.handle`, `Artwork`, `Island`, `Config`, `.layout_window`, `CompositionHost`, `timer.rs`, `UiProxy`, `MediaSnapshot`, `log`, `BluetoothWatcher`?**
-  _High betweenness centrality (0.070) - this node is a cross-community bridge._
+  _Cohesion score 0.052564102564102565 - nodes in this community are weakly interconnected._
+- **Why does `Ms` connect `Ms` to `.show_menu`, `LyricStatus`, `views.rs`, `island.rs`, `island/src/lib.rs`, `core/src/media.rs`, `Point`, `platform-win/src/media.rs`, `MediaCommand`, `lyrics.rs`, `State`, `Model`, `Lyrics`, `downloads.rs`, `.handle`, `fmt.rs`, `Island`, `AlertKind`, `Presentation`, `.render`?**
+  _High betweenness centrality (0.062) - this node is a cross-community bridge._
 - **Should `Text` be split into smaller, more focused modules?**
   _Cohesion score 0.0196078431372549 - nodes in this community are weakly interconnected._
