@@ -1,5 +1,5 @@
 use notchi_core::Ms;
-use notchi_core::color::{self, Color, Skin, TEXT_PRIMARY};
+use notchi_core::color::{self, Color, Skin};
 use notchi_core::fmt::{countdown, elapsed};
 use notchi_core::geom::{Rect, Size};
 use notchi_core::i18n::{Lang, Text, long_date, short_date, t};
@@ -122,16 +122,17 @@ impl Dyn {
     }
 }
 
-fn white(alpha: f32) -> Color {
-    TEXT_PRIMARY.with_opacity(alpha)
+/// Warna teks utama dengan opasitas tertentu, mengikuti tema (putih di gelap, tinta di terang).
+fn white(ui: &Ui, alpha: f32) -> Color {
+    ui.pal.text.with_opacity(alpha)
 }
 
-fn timer_color() -> Color {
-    color::accent_alert()
+fn timer_color(ui: &Ui) -> Color {
+    ui.pal.ink(color::accent_alert())
 }
 
 fn fill_color(ui: &Ui) -> Color {
-    if ui.pal.is_flat() { TEXT_PRIMARY } else { ui.accent }
+    if ui.pal.is_flat() { ui.pal.text } else { ui.accent }
 }
 
 pub fn timer_text(t: &Countdown, now: Ms) -> String {
@@ -163,7 +164,7 @@ fn left_icon(ui: &Ui, parent: &ContainerVisual, rect: Rect, slot: Slot, m: &Mode
         }
         _ => {
             let glyph = if slot == Slot::Media { G_MUSIC } else { G_STOPWATCH };
-            let style = TextStyle::new(rect.h * 0.62, Weight::Regular, m.skin.color()).icon().centered();
+            let style = TextStyle::new(rect.h * 0.62, Weight::Regular, ui.pal.ink(m.skin.color())).icon().centered();
             ui.text(parent, glyph, style, rect, Align::Center)?;
         }
     }
@@ -177,18 +178,18 @@ pub fn build_compact(ui: &Ui, parent: &ContainerVisual, slot: Slot, size: Size, 
     match slot {
         Slot::Media => {
             let playing = m.media.is_some_and(|s| s.is_playing());
-            waveform(ui, parent, right, m.skin.color(), playing)?;
+            waveform(ui, parent, right, ui.pal.ink(m.skin.color()), playing)?;
         }
         Slot::Timer => {
             if let Some(timer) = m.timer {
-                let color = if timer.is_running() { timer_color() } else { white(0.6) };
+                let color = if timer.is_running() { timer_color(ui) } else { white(ui, 0.6) };
                 let style = TextStyle::new(15.0, Weight::Semibold, color).tabular();
                 d.timer = Some(ui.text(parent, &timer_text(timer, m.now), style, text_rect, Align::Right)?);
             }
         }
         Slot::Stopwatch => {
             if let Some(sw) = m.stopwatch {
-                let style = TextStyle::new(15.0, Weight::Semibold, TEXT_PRIMARY).tabular();
+                let style = TextStyle::new(15.0, Weight::Semibold, ui.pal.text).tabular();
                 d.stopwatch = Some(ui.text(parent, &stopwatch_text(sw, m.now), style, text_rect, Align::Right)?);
             }
         }
@@ -204,9 +205,9 @@ pub fn build_bubble(ui: &Ui, parent: &ContainerVisual, slot: Slot, m: &Model<'_>
         }
         _ => {
             let (glyph, c) = match slot {
-                Slot::Media => (G_MUSIC, m.skin.color()),
-                Slot::Timer => (G_STOPWATCH, timer_color()),
-                Slot::Stopwatch => (G_STOPWATCH, TEXT_PRIMARY),
+                Slot::Media => (G_MUSIC, ui.pal.ink(m.skin.color())),
+                Slot::Timer => (G_STOPWATCH, timer_color(ui)),
+                Slot::Stopwatch => (G_STOPWATCH, ui.pal.text),
             };
             let style = TextStyle::new(15.0, Weight::Regular, c).icon().centered();
             ui.text(parent, glyph, style, r, Align::Center)?;
@@ -227,19 +228,19 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
         }
         None => {
             if ui.pal.is_flat() {
-                ui.rounded(parent, lay.art, 12.0, white(0.1))?;
+                ui.rounded(parent, lay.art, 12.0, white(ui, 0.1))?;
             }
             if m.mascot_on {
                 let inner = lay.art.inflate(-10.0);
                 d.mascot(mascot(ui, parent, inner, m.skin, m.expression)?, true);
             } else {
-                let style = TextStyle::new(24.0, Weight::Regular, white(0.6)).icon().centered();
+                let style = TextStyle::new(24.0, Weight::Regular, white(ui, 0.6)).icon().centered();
                 ui.text(parent, G_MUSIC, style, lay.art, Align::Center)?;
             }
         }
     }
     let title = snap.map(|s| s.title.as_str()).filter(|s| !s.is_empty()).unwrap_or(t(m.lang, Text::NothingPlaying));
-    ui.text(parent, title, TextStyle::new(15.0, Weight::Semibold, TEXT_PRIMARY), lay.title, Align::Left)?;
+    ui.text(parent, title, TextStyle::new(15.0, Weight::Semibold, ui.pal.text), lay.title, Align::Left)?;
     if let Some(s) = snap {
         let sub = if s.artist.is_empty() { s.album.as_str() } else { s.artist.as_str() };
         if !sub.is_empty() {
@@ -249,7 +250,7 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
         if s.session_count > 1 {
             source = format!("{source} · {}/{}", s.session_index + 1, s.session_count);
         }
-        ui.text(parent, &source, TextStyle::new(11.0, Weight::Medium, white(0.45)), lay.source, Align::Left)?;
+        ui.text(parent, &source, TextStyle::new(11.0, Weight::Medium, white(ui, 0.45)), lay.source, Align::Left)?;
     }
 
     if let (Some(rect), Some(state)) = (lay.lyrics, m.lyrics) {
@@ -281,7 +282,7 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
 
     if let Some(s) = snap.filter(|s| s.timeline.is_some()) {
         if ui.pal.is_flat() {
-            ui.rounded(parent, lay.progress, 2.0, white(0.2))?;
+            ui.rounded(parent, lay.progress, 2.0, white(ui, 0.2))?;
         } else {
             let track = Rect::new(lay.progress.x - 1.0, lay.progress.y - 1.0, lay.progress.w + 2.0, lay.progress.h + 2.0);
             ui.surface(parent, track, 3.0, false, ui.pal.well)?;
@@ -292,7 +293,7 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
         geom.SetCornerRadius(v2(2.0, 2.0))?;
         fill.SetClip(&ui.c.CreateGeometricClipWithGeometry(&geom)?)?;
         if s.controls.seek {
-            let (knob, _) = ui.dot(KNOB, TEXT_PRIMARY)?;
+            let (knob, _) = ui.dot(KNOB, ui.pal.text)?;
             knob.SetOpacity(0.0)?;
             knob.SetScale(v3(0.4, 0.4, 1.0))?;
             parent.Children()?.InsertAtTop(&knob)?;
@@ -303,7 +304,7 @@ pub fn build_media_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mu
             d.seek = Some(SeekBar { rect: lay.progress, knob, shown: false });
         }
         d.progress = Some((fill, lay.progress.w));
-        let small = TextStyle::new(11.0, Weight::Medium, white(0.6)).tabular();
+        let small = TextStyle::new(11.0, Weight::Medium, white(ui, 0.6)).tabular();
         let (el, rem) = media_times(s, m.now);
         d.elapsed = Some(ui.text(parent, &el, small, lay.elapsed, Align::Left)?);
         d.remaining = Some(ui.text(parent, &rem, small, lay.remaining, Align::Right)?);
@@ -381,7 +382,7 @@ impl LyricPanel {
             _ => ("♪".to_string(), true),
         };
         let next = (index.map_or(0, |i| i + 1)..lyrics.lines.len()).filter_map(line).find(|s| !s.is_empty());
-        let big = TextStyle::new(15.0, Weight::Semibold, if accent { ui.accent } else { TEXT_PRIMARY });
+        let big = TextStyle::new(15.0, Weight::Semibold, if accent { ui.pal.ink(ui.accent) } else { ui.pal.text });
         let fits = ui.gfx.measure(&cur, &big)?.w <= w;
         if fits {
             ui.text(&c, &cur, big, Rect::new(pad, 8.0, w, 22.0), Align::Left)?;
@@ -389,7 +390,7 @@ impl LyricPanel {
                 ui.text(&c, n, TextStyle::new(13.0, Weight::Regular, ui.pal.text_dim), Rect::new(pad, 32.0, w, 18.0), Align::Left)?;
             }
         } else {
-            let style = TextStyle::new(13.5, Weight::Semibold, TEXT_PRIMARY).wrap(2);
+            let style = TextStyle::new(13.5, Weight::Semibold, ui.pal.text).wrap(2);
             ui.text(&c, &cur, style, Rect::new(pad, 4.0, w, self.rect.h - 8.0), Align::Left)?;
         }
         if animate {
@@ -408,7 +409,7 @@ pub fn build_timer_card(ui: &Ui, parent: &ContainerVisual, stopwatch: bool, m: &
     if m.mascot_on {
         d.mascot(mascot(ui, parent, lay.mascot, m.skin, m.expression)?, true);
     } else {
-        let style = TextStyle::new(30.0, Weight::Regular, m.skin.color()).icon().centered();
+        let style = TextStyle::new(30.0, Weight::Regular, ui.pal.ink(m.skin.color())).icon().centered();
         ui.text(parent, G_STOPWATCH, style, lay.mascot, Align::Center)?;
     }
     let (label, running) = if stopwatch {
@@ -421,17 +422,17 @@ pub fn build_timer_card(ui: &Ui, parent: &ContainerVisual, stopwatch: bool, m: &
     let big = |c: Color| TextStyle::new(34.0, Weight::Semibold, c).tabular();
     if stopwatch {
         if let Some(sw) = m.stopwatch {
-            d.stopwatch = Some(ui.text(parent, &stopwatch_text(sw, m.now), big(TEXT_PRIMARY), lay.time, Align::Left)?);
+            d.stopwatch = Some(ui.text(parent, &stopwatch_text(sw, m.now), big(ui.pal.text), lay.time, Align::Left)?);
         }
     } else if let Some(timer) = m.timer {
-        let c = if running { timer_color() } else { white(0.6) };
+        let c = if running { timer_color(ui) } else { white(ui, 0.6) };
         d.timer = Some(ui.text(parent, &timer_text(timer, m.now), big(c), lay.time, Align::Left)?);
     }
     for (b, r) in &lay.buttons {
         let (label, icon, tone) = match b {
             Button::TimerAddMinute => ("+1", false, Tone::Neutral),
             Button::TimerPauseResume | Button::StopwatchPauseResume => {
-                (if running { G_PAUSE } else { G_PLAY }, true, Tone::Tinted(timer_color()))
+                (if running { G_PAUSE } else { G_PLAY }, true, Tone::Tinted(timer_color(ui)))
             }
             Button::TimerCancel => (G_CANCEL, true, Tone::Tinted(color::STATUS_CRITICAL)),
             Button::StopwatchStop => (G_STOP, true, Tone::Tinted(color::STATUS_CRITICAL)),
@@ -453,7 +454,7 @@ pub fn build_home_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mut
     if m.mascot_on {
         d.mascot(mascot(ui, parent, lay.mascot, m.skin, m.expression)?, true);
     }
-    let big = TextStyle::new(28.0, Weight::Semibold, TEXT_PRIMARY).tabular();
+    let big = TextStyle::new(28.0, Weight::Semibold, ui.pal.text).tabular();
     d.clock = Some(ui.text(parent, &clock_text(m.clock), big, lay.clock, Align::Left)?);
     let date = long_date(m.lang, m.clock.weekday, m.clock.day, m.clock.month);
     ui.text(parent, &date, TextStyle::new(13.0, Weight::Regular, ui.pal.text_dim), lay.date, Align::Left)?;
@@ -483,26 +484,26 @@ fn battery_badge(ui: &Ui, parent: &ContainerVisual, rect: Rect, r: PowerReading)
     let body = Size::new(21.0, 11.0);
     let bx = rect.x + rect.w - body.w - 3.0;
     let by = (rect.y + (rect.h - body.h) / 2.0).round();
-    let outline = white(0.55);
+    let outline = white(ui, 0.55);
     ui.rounded(parent, Rect::new(bx, by, body.w, body.h), 3.0, outline)?;
-    ui.rounded(parent, Rect::new(bx + 1.5, by + 1.5, body.w - 3.0, body.h - 3.0), 2.0, ui.pal.base)?;
+    ui.rounded(parent, Rect::new(bx + 1.5, by + 1.5, body.w - 3.0, body.h - 3.0), 2.0, ui.pal.surface())?;
     ui.rounded(parent, Rect::new(bx + body.w + 1.0, by + 3.5, 2.0, body.h - 7.0), 1.0, outline)?;
     let level = if charging {
         color::accent_charging()
     } else if pct <= LOW_BATTERY {
         color::STATUS_CRITICAL
     } else {
-        white(0.9)
+        white(ui, 0.9)
     };
     let inner = Size::new(body.w - 5.0, body.h - 5.0);
     let w = (inner.w * pct as f32 / 100.0).max(1.5);
     ui.rounded(parent, Rect::new(bx + 2.5, by + 2.5, w, inner.h), 1.0, level)?;
     if charging {
         let size = Size::new(6.0, 9.0);
-        ui.bolt(parent, Rect::new(bx + (body.w - size.w) / 2.0, by + (body.h - size.h) / 2.0, size.w, size.h), TEXT_PRIMARY)?;
+        ui.bolt(parent, Rect::new(bx + (body.w - size.w) / 2.0, by + (body.h - size.h) / 2.0, size.w, size.h), ui.pal.text)?;
     }
     let text = Rect::new(rect.x, rect.y, bx - rect.x - 5.0, rect.h);
-    let tint = if pct <= LOW_BATTERY && !charging { color::STATUS_CRITICAL } else { white(0.85) };
+    let tint = if pct <= LOW_BATTERY && !charging { ui.pal.ink(color::STATUS_CRITICAL) } else { white(ui, 0.85) };
     ui.text(parent, &format!("{pct}%"), TextStyle::new(12.0, Weight::Semibold, tint).tabular(), text, Align::Right)?;
     Ok(true)
 }
@@ -519,7 +520,7 @@ pub fn build_peek_idle(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model<
     if m.mascot_on {
         d.mascot(mascot(ui, parent, lay.icon, m.skin, m.expression)?, true);
     } else {
-        let style = TextStyle::new(lay.icon.h * 0.62, Weight::Regular, m.skin.color()).icon().centered();
+        let style = TextStyle::new(lay.icon.h * 0.62, Weight::Regular, ui.pal.ink(m.skin.color())).icon().centered();
         ui.text(parent, G_CLOCK, style, lay.icon, Align::Center)?;
     }
     let badge = Rect::new(size.w - 14.0 - BATTERY_BADGE.w, (size.h - BATTERY_BADGE.h) / 2.0, BATTERY_BADGE.w, BATTERY_BADGE.h);
@@ -530,12 +531,12 @@ pub fn build_peek_idle(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model<
     let end = if shown {
         badge.x + 4.0
     } else {
-        let style = TextStyle::new(12.0, Weight::Regular, white(0.45)).icon().centered();
+        let style = TextStyle::new(12.0, Weight::Regular, white(ui, 0.45)).icon().centered();
         ui.text(parent, G_CHEVRON, style, lay.trailing, Align::Center)?;
         lay.trailing.x
     };
     let x = lay.title.x;
-    let clock = TextStyle::new(15.0, Weight::Semibold, TEXT_PRIMARY).tabular();
+    let clock = TextStyle::new(15.0, Weight::Semibold, ui.pal.text).tabular();
     let cw = ui.gfx.measure("00:00", &clock)?.w.ceil() + 2.0;
     d.clock = Some(ui.text(parent, &clock_text(m.clock), clock, Rect::new(x, 0.0, cw, size.h), Align::Left)?);
     let dx = x + cw + 8.0;
@@ -551,7 +552,7 @@ pub fn build_peek_media(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model
     let Some(s) = m.media else { return Ok(()) };
     let title = if s.title.trim().is_empty() { t(m.lang, Text::NothingPlaying) } else { s.title.as_str() };
     let sub = if s.artist.is_empty() { s.album.as_str() } else { s.artist.as_str() };
-    let style = TextStyle::new(13.0, Weight::Semibold, TEXT_PRIMARY);
+    let style = TextStyle::new(13.0, Weight::Semibold, ui.pal.text);
     if sub.is_empty() {
         ui.text(parent, title, style, Rect::new(lay.title.x, 0.0, lay.title.w, size.h), Align::Left)?;
     } else {
@@ -581,20 +582,20 @@ pub fn build_alert(ui: &Ui, parent: &ContainerVisual, alert: &AlertKind, m: &Mod
     }
     let pct = |p: Option<u8>| p.map(|p| format!("{p}%")).unwrap_or_default();
     let (title, subtitle, value, accent) = match alert {
-        AlertKind::Charging { percent } => (t(m.lang, Text::Charging), String::new(), pct(*percent), color::accent_charging()),
-        AlertKind::Unplugged { percent } => (t(m.lang, Text::Unplugged), String::new(), pct(*percent), TEXT_PRIMARY),
+        AlertKind::Charging { percent } => (t(m.lang, Text::Charging), String::new(), pct(*percent), ui.pal.ink(color::accent_charging())),
+        AlertKind::Unplugged { percent } => (t(m.lang, Text::Unplugged), String::new(), pct(*percent), ui.pal.text),
         AlertKind::LowBattery { percent, critical } => {
             let key = if *critical { Text::BatteryCritical } else { Text::BatteryLow };
-            (t(m.lang, key), String::new(), format!("{percent}%"), color::STATUS_CRITICAL)
+            (t(m.lang, key), String::new(), format!("{percent}%"), ui.pal.ink(color::STATUS_CRITICAL))
         }
         AlertKind::TimerDone => {
             let total = m.timer.map(|t| countdown(t.total())).unwrap_or_default();
-            (t(m.lang, Text::TimerDone), total, String::new(), timer_color())
+            (t(m.lang, Text::TimerDone), total, String::new(), timer_color(ui))
         }
-        AlertKind::Volume { .. } => (t(m.lang, Text::Volume), String::new(), String::new(), TEXT_PRIMARY),
+        AlertKind::Volume { .. } => (t(m.lang, Text::Volume), String::new(), String::new(), ui.pal.text),
     };
     let title_rect = if subtitle.is_empty() { Rect::new(lay.title.x, 0.0, lay.title.w, layout::EXPANDED_MIN_H) } else { lay.title };
-    ui.text(parent, title, TextStyle::new(15.0, Weight::Semibold, TEXT_PRIMARY), title_rect, Align::Left)?;
+    ui.text(parent, title, TextStyle::new(15.0, Weight::Semibold, ui.pal.text), title_rect, Align::Left)?;
     if !subtitle.is_empty() {
         ui.text(parent, &subtitle, TextStyle::new(13.0, Weight::Regular, ui.pal.text_dim).tabular(), lay.subtitle, Align::Left)?;
     }
@@ -608,10 +609,10 @@ pub fn build_hud(ui: &Ui, parent: &ContainerVisual, level: u8, muted: bool, d: &
     let size = layout::HUD;
     let glyph = if muted || level == 0 { G_MUTE } else { G_VOLUME };
     let icon = Rect::new(10.0, 0.0, 24.0, size.h);
-    ui.text(parent, glyph, TextStyle::new(15.0, Weight::Regular, TEXT_PRIMARY).icon().centered(), icon, Align::Center)?;
+    ui.text(parent, glyph, TextStyle::new(15.0, Weight::Regular, ui.pal.text).icon().centered(), icon, Align::Center)?;
     let track = Rect::new(42.0, (size.h - 4.0) / 2.0, size.w - 42.0 - 48.0, 4.0);
     if ui.pal.is_flat() {
-        ui.rounded(parent, track, 2.0, white(0.2))?;
+        ui.rounded(parent, track, 2.0, white(ui, 0.2))?;
     } else {
         ui.surface(parent, Rect::new(track.x - 1.0, track.y - 1.0, track.w + 2.0, track.h + 2.0), 3.0, false, ui.pal.well)?;
     }
@@ -623,6 +624,6 @@ pub fn build_hud(ui: &Ui, parent: &ContainerVisual, level: u8, muted: bool, d: &
     fill.SetSize(v2(track.w * level as f32 / 100.0, track.h))?;
     d.hud_bar = Some((fill, track.w));
     let text = Rect::new(size.w - 44.0, 0.0, 32.0, size.h);
-    d.hud_text = Some(ui.text(parent, &level.to_string(), TextStyle::new(13.0, Weight::Semibold, TEXT_PRIMARY).tabular(), text, Align::Right)?);
+    d.hud_text = Some(ui.text(parent, &level.to_string(), TextStyle::new(13.0, Weight::Semibold, ui.pal.text).tabular(), text, Align::Right)?);
     Ok(())
 }

@@ -3,7 +3,7 @@ use crate::hotkey::Hotkey;
 use crate::i18n::Lang;
 use crate::island::Behavior;
 use crate::layout::{HoverZone, Placement};
-use crate::theme::Style;
+use crate::theme::{Style, Theme};
 use toml::{Table, Value};
 
 pub const MAX_CONFIG_BYTES: usize = 256 * 1024;
@@ -61,6 +61,7 @@ pub struct Config {
     pub language: Lang,
     pub island: IslandConfig,
     pub style: Style,
+    pub theme: Theme,
     pub mascot: MascotConfig,
     pub media: MediaConfig,
     pub power: PowerConfig,
@@ -86,6 +87,7 @@ impl Default for Config {
                 side_mascot: true,
             },
             style: Style::Neumorphism,
+            theme: Theme::System,
             mascot: MascotConfig { enabled: true, skin: Skin::Langit },
             media: MediaConfig {
                 enabled: true,
@@ -139,8 +141,11 @@ side_mascot = true
 
 [appearance]
 # "neumorphism" (permukaan lembut timbul), "clay" (tombol 3D seperti tanah liat),
-# atau "classic" (hitam pekat, datar).
+# "glass" (kaca modern tembus pandang), atau "classic" (pekat, datar).
 style = "neumorphism"
+# Tema warna: "system" mengikuti Windows (mode aplikasi terang/gelap),
+# "dark" selalu gelap, "light" selalu terang.
+theme = "system"
 
 [mascot]
 enabled = true
@@ -331,7 +336,7 @@ pub const LEGACY_ISLAND_KEYS: [&str; 3] = ["mode", "autohide", "top_margin"];
 
 const KNOWN: &[(&str, &[&str])] = &[
     ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "x", "position", "hover_zone", "side_mascot", "mode", "autohide", "top_margin"]),
-    ("appearance", &["style"]),
+    ("appearance", &["style", "theme"]),
     ("mascot", &["enabled", "skin"]),
     ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds", "lyrics"]),
     ("power", &["enabled", "low_thresholds"]),
@@ -413,7 +418,10 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     });
     let side_mascot = r.bool("island.side_mascot", d.island.side_mascot);
     let style = r.parsed("appearance.style", d.style, |s| {
-        Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", atau \"classic\"".into())
+        Style::from_key(s).ok_or("harus \"neumorphism\", \"clay\", \"glass\", atau \"classic\"".into())
+    });
+    let theme = r.parsed("appearance.theme", d.theme, |s| {
+        Theme::from_key(s).ok_or("harus \"system\", \"dark\", atau \"light\"".into())
     });
 
     let mascot_enabled = r.bool("mascot.enabled", d.mascot.enabled);
@@ -450,6 +458,7 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         language,
         island: IslandConfig { behavior, hotkey, hide_in_fullscreen, avoid_windows, x, hover_zone, side_mascot },
         style,
+        theme,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
         media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger, lyrics },
         power: PowerConfig { enabled: power_enabled, low_thresholds: thresholds.into_iter().map(|t| t as u8).collect() },
@@ -693,6 +702,18 @@ low_thresholds = [15, 0, "x"]
         let (c, w) = parse(&set_value(DEFAULT_TOML, "island", "side_mascot", "false"));
         assert!(w.is_empty(), "{w:?}");
         assert!(!c.island.side_mascot);
+    }
+
+    #[test]
+    fn tema_dan_gaya_kaca() {
+        assert_eq!(Config::default().theme, Theme::System);
+        let out = set_value(DEFAULT_TOML, "appearance", "theme", "\"light\"");
+        let out = set_value(&out, "appearance", "style", "\"glass\"");
+        let (c, w) = parse(&out);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!((c.theme, c.style), (Theme::Light, Style::Glass));
+        let (c, w) = parse("[appearance]\ntheme = \"senja\"\n");
+        assert_eq!((c.theme, w.len()), (Theme::System, 1));
     }
 
     #[test]

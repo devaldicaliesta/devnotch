@@ -159,12 +159,11 @@ impl Ui {
     pub fn tone_colors(&self, tone: Tone) -> (Color, Color) {
         let p = &self.pal;
         match (p.style, tone) {
-            (_, Tone::Disabled) => (p.well, TEXT_PRIMARY.with_opacity(0.3)),
-            (Style::Classic, Tone::Neutral) => (TEXT_PRIMARY.with_opacity(0.14).over(p.base), TEXT_PRIMARY),
-            (Style::Classic, Tone::Tinted(c)) => (c.with_opacity(0.25).over(p.base), c),
-            (Style::Neumorphism, Tone::Neutral) => (p.base, TEXT_PRIMARY),
-            (Style::Neumorphism, Tone::Tinted(c)) => (p.base, c),
-            (Style::Clay, Tone::Neutral) => (Color::rgb(0x2A2833), TEXT_PRIMARY),
+            (_, Tone::Disabled) => (p.well, p.text.with_opacity(0.3)),
+            (_, Tone::Neutral) => (p.neutral, p.text),
+            (Style::Classic, Tone::Tinted(c)) => (c.with_opacity(0.25).over(p.surface()), p.ink(c)),
+            (Style::Neumorphism, Tone::Tinted(c)) => (p.base, p.ink(c)),
+            (Style::Glass, Tone::Tinted(c)) => (c.with_opacity(0.88), p.on(c)),
             (Style::Clay, Tone::Tinted(c)) => (c, p.on(c)),
         }
     }
@@ -185,9 +184,9 @@ impl Ui {
                 let depth = (rect.h * 0.07).clamp(1.5, 4.0);
                 self.relief(&host, local, radius, &self.pal.inset(bg, depth))?;
             }
-            (Style::Clay, _) => {
+            (Style::Clay | Style::Glass, _) => {
                 let depth = (rect.h * 0.1).clamp(2.0, 5.0);
-                self.relief(&host, local, radius, &self.pal.clay(bg, depth))?;
+                self.relief(&host, local, radius, &self.pal.raised(bg, depth))?;
             }
             _ => {
                 let depth = (rect.h * 0.1).clamp(2.0, 5.0);

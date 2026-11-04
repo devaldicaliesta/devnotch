@@ -383,6 +383,17 @@ pub fn create_overlay(title: &str) -> Result<OwnedWindow> {
     }
 }
 
+/// Warna bilah judul dan mode gelap/terang bingkai jendela panel.
+fn set_caption(hwnd: HWND, caption: Color, dark: bool) {
+    let flag = BOOL(dark as i32);
+    let tone = colorref(caption);
+    unsafe {
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &flag as *const _ as *const c_void, 4);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &tone as *const _ as *const c_void, 4);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &tone as *const _ as *const c_void, 4);
+    }
+}
+
 fn colorref(c: Color) -> u32 {
     c.r as u32 | (c.g as u32) << 8 | (c.b as u32) << 16
 }
@@ -394,7 +405,7 @@ const PANEL_STYLE: WINDOW_STYLE = WINDOW_STYLE(
 );
 const PANEL_EX: WINDOW_EX_STYLE = WINDOW_EX_STYLE(WS_EX_APPWINDOW.0 | WS_EX_NOREDIRECTIONBITMAP.0);
 
-pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, icon: &IconImage) -> Result<OwnedWindow> {
+pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, dark: bool, icon: &IconImage) -> Result<OwnedWindow> {
     let class = wide(PANEL_CLASS);
     let title = wide(title);
     unsafe {
@@ -426,11 +437,7 @@ pub fn create_panel(title: &str, client_dp: (f32, f32), caption: Color, icon: &I
         let y = work.top + ((work.bottom - work.top) - h).max(0) / 2;
         let hwnd = CreateWindowExW(ex, PCWSTR(class.as_ptr()), PCWSTR(title.as_ptr()), style, x, y, w, h, None, None, Some(instance), None)?;
 
-        let yes = BOOL(1);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &yes as *const _ as *const c_void, 4);
-        let tone = colorref(caption);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &tone as *const _ as *const c_void, 4);
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &tone as *const _ as *const c_void, 4);
+        set_caption(hwnd, caption, dark);
 
         let state = Box::new(WindowState {
             handler: RefCell::new(None),
@@ -687,6 +694,11 @@ unsafe fn fill_menu(menu: HMENU, items: &[MenuItem]) -> Result<()> {
 }
 
 impl Window {
+    /// Samakan bilah judul dengan tema (gelap/terang) jendela panel.
+    pub fn set_caption(&self, caption: Color, dark: bool) {
+        set_caption(self.hwnd, caption, dark);
+    }
+
     /// Ukuran area klien dalam piksel.
     pub fn client_px(&self) -> (i32, i32) {
         let mut r = RECT::default();

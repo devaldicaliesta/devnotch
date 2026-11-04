@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use notchi_core::Ms;
 use notchi_core::activity::{Activities, ActivityKind};
-use notchi_core::color::{self, Color, Skin, TEXT_PRIMARY};
+use notchi_core::color::{self, Color, Skin};
 use notchi_core::config::{self, Config, ReduceMotion, Warning};
 use notchi_core::geom::{Point, Size, scale_for_dpi};
 use notchi_core::i18n::{Lang, Text, t};
@@ -25,7 +25,7 @@ use notchi_core::media::{Artwork, Controls, MediaPresence, MediaSnapshot, Source
 use notchi_core::power::{BatteryMonitor, PowerEvent, PowerReading};
 use notchi_core::privacy::Privacy;
 use notchi_core::spring::SpringPreset;
-use notchi_core::theme::{self, Style};
+use notchi_core::theme::{self, Mode, Style, Theme};
 use notchi_core::timer::{Countdown, Stopwatch};
 use notchi_platform_win::audio::Volume;
 use notchi_platform_win::comp::{Animator, CompositionHost, CompositionSpriteShape, ContainerVisual, ShapeVisual, v2, v3};
@@ -237,6 +237,7 @@ pub struct IslandApp {
     gazing: bool,
     gaze_last: Option<(i32, i32)>,
     morph_seq: u64,
+    morph_pending: bool,
     retire_seq: u64,
     fx: Vec<(u64, ContainerVisual)>,
     fx_seq: u64,
@@ -320,6 +321,10 @@ fn query_of(snap: &MediaSnapshot) -> Query {
     Query::new(&snap.title, &snap.artist, &snap.album, snap.timeline.map_or(0, |t| t.end))
 }
 
+fn resolve_mode(theme: Theme) -> Mode {
+    theme.resolve(theme == Theme::System && shell::apps_use_light_theme())
+}
+
 fn lyric_timing(snap: &MediaSnapshot, now: Ms) -> (Ms, Ms) {
     let pos = snap.position_at(now).unwrap_or(0) + LYRIC_LEAD_MS;
     (pos, snap.timeline.map_or(0, |t| t.end))
@@ -345,7 +350,7 @@ impl IslandApp {
         let anim = Animator::new(&host.compositor);
         let gfx = Rc::new(Gfx::new(&host.compositor)?);
         let scale = scale_for_dpi(primary_monitor().dpi);
-        let pal = theme::palette(cfg.style);
+        let pal = theme::palette(cfg.style, resolve_mode(cfg.theme));
         let ui = Ui { c: host.compositor.clone(), anim, gfx, scale, pal, accent: cfg.mascot.skin.color() };
 
         let stage = ui.container(&host.root)?;
@@ -394,6 +399,7 @@ impl IslandApp {
             gazing: false,
             gaze_last: None,
             morph_seq: 0,
+            morph_pending: false,
             retire_seq: 0,
             fx: Vec::new(),
             fx_seq: 0,
@@ -498,14 +504,7 @@ impl IslandApp {
             let icon = IconImage { size: 32, rgba: mascot_rgba(32, self.cfg.mascot.skin) };
             self.tray = TrayIcon::new(&self.window, &icon, "Notchi").ok();
         }
-        if first || old.style != self.cfg.style {
-            self.ui.pal = theme::palette(self.cfg.style);
-            let base = self.ui.pal.base;
-            let _ = self.main.set_fill(&self.ui, base);
-            let _ = self.bubble.set_fill(&self.ui, base);
-            self.lip_tint = None;
-            self.apply_liquid();
-        } else if old.liquid != self.cfg.liquid {
+        if !self.refresh_theme(first) && old.liquid != self.cfg.liquid {
             self.apply_liquid();
         }
         if hotkey_changed && let Some(s) = self.settings.as_mut() {
@@ -515,7 +514,7 @@ impl IslandApp {
         self.update_tooltip();
         self.sync_settings();
         self.key = None;
-        if !first && old.island.x != self.cfg.island.x && self.drag.is_none() {
+        if !first && old.island.x != self.cfg.island.x && !self.dragging {
             self.anchor_px = None;
             self.layout_window();
         }
@@ -578,6 +577,22 @@ impl IslandApp {
         });
     }
 
+    /// Terapkan palet dari gaya dan tema (gelap/terang). Tema "system" dibaca ulang
+    /// dari Windows setiap kali pengaturan sistem berubah.
+    fn refresh_theme(&mut self, force: bool) -> bool {
+        let pal = theme::palette(self.cfg.style, resolve_mode(self.cfg.theme));
+        if !force && pal == self.ui.pal {
+            return false;
+        }
+        self.ui.pal = pal;
+        let _ = self.main.set_fill(&self.ui, pal.base);
+        let _ = self.bubble.set_fill(&self.ui, pal.base);
+        self.lip_tint = None;
+        self.apply_liquid();
+        self.key = None;
+        true
+    }
+
     fn refresh_motion(&mut self) {
         let reduce = match self.cfg.reduce_motion {
             ReduceMotion::System => !shell::animations_enabled(),
@@ -611,7 +626,12 @@ impl IslandApp {
             Event::Hotkey(_) => {}
             Event::DpiChanged(_) | Event::DisplayChanged => self.on_display(),
             Event::Resized => {}
-            Event::SettingsChanged => self.refresh_motion(),
+            Event::SettingsChanged => {
+                self.refresh_motion();
+                if self.cfg.theme == Theme::System && self.refresh_theme(false) {
+                    self.sync_settings();
+                }
+            }
             Event::PowerChanged => {
                 let reading = power::read();
                 self.power = Some(reading);
@@ -903,10 +923,6 @@ impl IslandApp {
                 }
             }
         }
-        if self.island.is_expanded() && !self.esc_registered {
-            let esc = notchi_core::hotkey::Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: VK_ESCAPE as u16 };
-            self.esc_registered = self.window.register_hotkey(HK_ESC, &esc);
-        }
         if self.pointer.seek.is_some() {
             let pill = self.main_rect();
             if let Some(bar) = self.content.as_ref().and_then(|c| c.d.seek.as_ref()).map(|s| s.rect) {
@@ -984,6 +1000,10 @@ impl IslandApp {
             c.progress_sync = None;
         }
         self.pointer = Pointer::default();
+        // Tombol ditekan lalu kursor keluar tanpa dilepas: jangan biarkan drag basi
+        // menghalangi perubahan posisi dari Pengaturan atau config.toml.
+        self.drag = None;
+        self.window.kill_timer(T_LONG_PRESS);
         self.wheel_acc = 0;
         self.release_button();
         let _ = self.track_pointer(None);
@@ -992,10 +1012,6 @@ impl IslandApp {
             self.window.set_timer(T_RETRACT, RETRACT_DELAY_MS);
         } else {
             self.island.set_hover(false);
-        }
-        if self.esc_registered {
-            self.window.unregister_hotkey(HK_ESC);
-            self.esc_registered = false;
         }
         if self.island.is_expanded() {
             self.window.set_timer(T_COLLAPSE, COLLAPSE_DELAY_MS);
@@ -1466,7 +1482,8 @@ impl IslandApp {
             Setting::SideMascot => self.persist("island", "side_mascot", flag(on)),
             Setting::Position => self.persist_x(Placement::ALL[i.min(2)].x()),
             Setting::HoverZone => self.persist("island", "hover_zone", &quoted(HoverZone::ALL[i.min(1)].key())),
-            Setting::Style => self.persist("appearance", "style", &quoted(Style::ALL[i.min(2)].key())),
+            Setting::Style => self.persist("appearance", "style", &quoted(Style::ALL[i.min(Style::ALL.len() - 1)].key())),
+            Setting::Theme => self.persist("appearance", "theme", &quoted(Theme::ALL[i.min(Theme::ALL.len() - 1)].key())),
             Setting::Reduce => self.persist("motion", "reduce", &quoted(["system", "on", "off"][i.min(2)])),
             Setting::Mascot => self.persist("mascot", "enabled", flag(on)),
             Setting::Skin => {
@@ -1691,6 +1708,16 @@ impl IslandApp {
                 SpringPreset::BOUNCY
             };
             self.morph(shape, preset)?;
+        } else {
+            // Bentuk sama tetapi aturan menyingkir berubah (perilaku, jendela di bawahnya,
+            // zona hover): perbarui region agar zona pemicu tidak tertinggal.
+            let settled = self.region_of(shape);
+            if settled != self.settled_region {
+                self.settled_region = settled;
+                if !self.morph_pending {
+                    self.set_region(settled);
+                }
+            }
         }
         if visible != self.visible {
             self.set_visible(visible)?;
@@ -1706,10 +1733,21 @@ impl IslandApp {
             self.ui.anim.spring(&self.main.visual, "Scale.X", rest, SpringPreset::SNAPPY)?;
             self.ui.anim.spring(&self.main.visual, "Scale.Y", rest, SpringPreset::SNAPPY)?;
         }
-        let watch = self.island.is_expanded();
+        let watch = self.island.is_expanded() && visible;
         if watch != self.watching {
             self.watching = watch;
             self.window.watch_outside(watch);
+        }
+        // Esc menutup kartu yang terbuka, dari mana pun kartu dibuka (klik, tahan, hotkey, tray).
+        // Hanya didaftarkan selama kartu terbuka agar tombol Esc aplikasi lain tidak tertelan.
+        if watch != self.esc_registered {
+            if watch {
+                let esc = notchi_core::hotkey::Hotkey { ctrl: false, alt: false, shift: false, win: false, vk: VK_ESCAPE as u16 };
+                self.esc_registered = self.window.register_hotkey(HK_ESC, &esc);
+            } else {
+                self.window.unregister_hotkey(HK_ESC);
+                self.esc_registered = false;
+            }
         }
         if self.key.as_ref() != Some(&key) {
             let fresh_alert = alert.is_some() && self.key.as_ref().map(|k| &k.alert) != Some(&key.alert);
@@ -1726,9 +1764,9 @@ impl IslandApp {
     fn celebrate(&mut self, alert: &AlertKind, shape: Shape) {
         let (kind, colors) = match alert {
             AlertKind::TimerDone => {
-                (Burst::Confetti, vec![color::accent_alert(), self.ui.accent, color::accent_charging(), TEXT_PRIMARY])
+                (Burst::Confetti, vec![color::accent_alert(), self.ui.accent, color::accent_charging(), self.ui.pal.text])
             }
-            AlertKind::Charging { .. } => (Burst::Sparkle, vec![color::accent_charging(), TEXT_PRIMARY]),
+            AlertKind::Charging { .. } => (Burst::Sparkle, vec![color::accent_charging(), self.ui.pal.text]),
             _ => return,
         };
         let center = self.content.as_ref().and_then(|c| c.d.mascot.as_ref()).map(|m| m.center());
@@ -1899,6 +1937,7 @@ impl IslandApp {
 
     fn morph(&mut self, shape: Shape, p: SpringPreset) -> Result<()> {
         self.morph_seq += 1;
+        self.morph_pending = true;
         self.settled_region = self.region_of(shape);
         let moving = rect_union(self.centered(layout::hit_box(&[shape]), &shape), self.settled_region);
         self.set_region(rect_union(self.region, moving));
@@ -1934,6 +1973,7 @@ impl IslandApp {
         let bubble_target = if visible && self.shape.bubble { 1.0 } else { 0.0 };
         a.linear(&self.bubble.visual, "Opacity", bubble_target, CONTENT_FADE_MS, 0.0)?;
         self.morph_seq += 1;
+        self.morph_pending = true;
         batch.end(&self.proxy, TAG_MORPH | self.morph_seq)?;
         Ok(())
     }
@@ -1942,6 +1982,7 @@ impl IslandApp {
         let seq = tag & TAG_MASK;
         match tag & !TAG_MASK {
             TAG_MORPH if seq == self.morph_seq => {
+                self.morph_pending = false;
                 if self.visible {
                     self.set_region(self.settled_region);
                 } else {

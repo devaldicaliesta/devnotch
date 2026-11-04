@@ -1,10 +1,10 @@
-use notchi_core::color::{Color, Skin, TEXT_PRIMARY};
+use notchi_core::color::{Color, Skin};
 use notchi_core::config::{Config, ReduceMotion};
 use notchi_core::geom::{Point, Rect, scale_for_dpi};
 use notchi_core::i18n::{Lang, Text, t};
 use notchi_core::mascot::Expression;
 use notchi_core::spring::SpringPreset;
-use notchi_core::theme::Style;
+use notchi_core::theme::{Mode, Style};
 use notchi_platform_win::Result;
 use notchi_platform_win::comp::{CompositionHost, ContainerVisual, ShapeVisual, SpriteVisual, color, v2, v3};
 use notchi_platform_win::gfx::{TextStyle, Weight};
@@ -13,7 +13,7 @@ use notchi_platform_win::window::{Event, IconImage, OwnedWindow, UiProxy, create
 use crate::fx::{self, Burst, Spark};
 use crate::ui::{Align, DynText, Mascot, Tone, Ui, mascot};
 
-pub const SIZE: (f32, f32) = (700.0, 764.0);
+pub const SIZE: (f32, f32) = (700.0, 792.0);
 pub const TAG_PANEL_FX: u64 = 4 << 40;
 
 const M: f32 = 24.0;
@@ -39,6 +39,7 @@ pub enum Setting {
     SideMascot,
     HoverZone,
     Style,
+    Theme,
     Reduce,
     Mascot,
     Skin,
@@ -68,6 +69,7 @@ pub fn value(cfg: &Config, s: Setting) -> usize {
         Setting::SideMascot => cfg.island.side_mascot as usize,
         Setting::HoverZone => cfg.island.hover_zone.index(),
         Setting::Style => cfg.style.index(),
+        Setting::Theme => cfg.theme.index(),
         Setting::Reduce => match cfg.reduce_motion {
             ReduceMotion::System => 0,
             ReduceMotion::On => 1,
@@ -105,6 +107,7 @@ struct Control {
 struct Look {
     lang: Lang,
     style: Style,
+    mode: Mode,
     skin: Skin,
     reduce: bool,
 }
@@ -136,25 +139,9 @@ impl std::fmt::Debug for Settings {
     }
 }
 
-fn knob_color(style: Style) -> Color {
-    match style {
-        Style::Neumorphism => Color::rgb(0x2A2D35),
-        Style::Clay => Color::rgb(0x4A4857),
-        Style::Classic => TEXT_PRIMARY,
-    }
-}
-
-fn pill_color(style: Style) -> Color {
-    match style {
-        Style::Neumorphism => Color::rgb(0x1E2026),
-        Style::Clay => Color::rgb(0x2A2833),
-        Style::Classic => Color::rgb(0x3A3A3C),
-    }
-}
-
 impl Settings {
     pub fn open(base: &Ui, proxy: &UiProxy, cfg: &Config, hotkey: String, icon: &IconImage) -> Result<Settings> {
-        let window = create_panel(t(cfg.language, Text::SettingsTitle), SIZE, base.pal.base, icon)?;
+        let window = create_panel(t(cfg.language, Text::SettingsTitle), SIZE, base.pal.backdrop, !base.pal.is_light(), icon)?;
         let w = window.window();
         let fwd = proxy.clone();
         window.set_handler(move |_, ev| fwd.post(Event::Panel(Box::new(ev))));
@@ -163,7 +150,7 @@ impl Settings {
         // Latar memenuhi seluruh jendela, berapa pun ukurannya.
         let bg = ui.c.CreateSpriteVisual()?;
         bg.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
-        bg.SetBrush(&ui.c.CreateColorBrushWithColor(color(ui.pal.base))?)?;
+        bg.SetBrush(&ui.c.CreateColorBrushWithColor(color(ui.pal.backdrop))?)?;
         host.root.Children()?.InsertAtTop(&bg)?;
         let stage = ui.container(&host.root)?;
         let mut s = Settings {
@@ -233,7 +220,7 @@ impl Settings {
     }
 
     fn look_of(&self, cfg: &Config) -> Look {
-        Look { lang: cfg.language, style: cfg.style, skin: cfg.mascot.skin, reduce: self.ui.anim.reduce_motion }
+        Look { lang: cfg.language, style: cfg.style, mode: self.ui.pal.mode, skin: cfg.mascot.skin, reduce: self.ui.anim.reduce_motion }
     }
 
     pub fn update(&mut self, base: &Ui, cfg: &Config) -> Result<()> {
@@ -297,8 +284,9 @@ impl Settings {
         let ui = self.ui.fork(self.ui.scale);
         let pal = ui.pal;
         let stage = self.stage.clone();
-        self.bg.SetBrush(&ui.c.CreateColorBrushWithColor(color(pal.base))?)?;
-        ui.bar(&stage, Rect::new(0.0, 0.0, SIZE.0, SIZE.1), pal.base)?;
+        self.bg.SetBrush(&ui.c.CreateColorBrushWithColor(color(pal.backdrop))?)?;
+        self.window.window().set_caption(pal.backdrop, !pal.is_light());
+        ui.bar(&stage, Rect::new(0.0, 0.0, SIZE.0, SIZE.1), pal.backdrop)?;
 
         let mrect = Rect::new(M, 18.0, 42.0, 42.0);
         let mut m = mascot(&ui, &stage, mrect, cfg.mascot.skin, Expression::Idle)?;
@@ -350,11 +338,17 @@ impl Settings {
         self.choice(&ui, Setting::HoverZone, Rect::new(row.x + COL - INNER - 150.0, row.y + 7.0, 150.0, 32.0), &zones, value(cfg, Setting::HoverZone))?;
         y += ROW;
 
-        let mut y2 = self.section(&ui, left, y + 18.0, COL, t(lang, Text::SecLook), 2.0 * ROW)?;
+        let mut y2 = self.section(&ui, left, y + 18.0, COL, t(lang, Text::SecLook), 3.0 * ROW)?;
         let row = Rect::new(left, y2, COL, ROW);
         self.label(&ui, row, t(lang, Text::Style))?;
-        let styles = [t(lang, Text::SegNeu), t(lang, Text::SegClay), t(lang, Text::SegClassic)];
-        self.choice(&ui, Setting::Style, Rect::new(row.x + COL - INNER - 222.0, row.y + 7.0, 222.0, 32.0), &styles, value(cfg, Setting::Style))?;
+        let styles = [t(lang, Text::SegNeu), t(lang, Text::SegClay), t(lang, Text::SegGlass), t(lang, Text::SegClassic)];
+        self.choice(&ui, Setting::Style, Rect::new(row.x + COL - INNER - 236.0, row.y + 7.0, 236.0, 32.0), &styles, value(cfg, Setting::Style))?;
+        y2 += ROW;
+        self.divider(&ui, left, y2, COL)?;
+        let row = Rect::new(left, y2, COL, ROW);
+        self.label(&ui, row, t(lang, Text::Theme))?;
+        let themes = [t(lang, Text::SegSystem), t(lang, Text::SegDark), t(lang, Text::SegLight)];
+        self.choice(&ui, Setting::Theme, Rect::new(row.x + COL - INNER - 198.0, row.y + 7.0, 198.0, 32.0), &themes, value(cfg, Setting::Theme))?;
         y2 += ROW;
         self.divider(&ui, left, y2, COL)?;
         let row = Rect::new(left, y2, COL, ROW);
@@ -452,7 +446,7 @@ impl Settings {
             Style::Clay => {
                 ui.relief(&lit, local, TRACK_H / 2.0, &pal.clay(ui.accent, 2.0))?;
             }
-            Style::Neumorphism => {
+            Style::Neumorphism | Style::Glass => {
                 ui.relief(&lit, local, TRACK_H / 2.0, &pal.inset(ui.accent, 2.0))?;
             }
         }
@@ -468,13 +462,13 @@ impl Settings {
         let kr = Rect::new(0.0, 0.0, KNOB, KNOB);
         match pal.style {
             Style::Classic => {
-                ui.rounded(&knob, kr, KNOB / 2.0, knob_color(pal.style))?;
+                ui.rounded(&knob, kr, KNOB / 2.0, pal.knob)?;
             }
             Style::Clay => {
-                ui.relief(&knob, kr, KNOB / 2.0, &pal.clay(knob_color(pal.style), 2.0))?;
+                ui.relief(&knob, kr, KNOB / 2.0, &pal.clay(pal.knob, 2.0))?;
             }
-            Style::Neumorphism => {
-                ui.relief(&knob, kr, KNOB / 2.0, &pal.raised(knob_color(pal.style), 2.5))?;
+            Style::Neumorphism | Style::Glass => {
+                ui.relief(&knob, kr, KNOB / 2.0, &pal.raised(pal.knob, 2.5))?;
             }
         }
         self.controls.push(Control { setting, hit: vec![row], kind: Kind::Toggle { knob, lit, off_x, on_x, on } });
@@ -487,21 +481,24 @@ impl Settings {
         let n = labels.len().max(1);
         let sw = area.w / n as f32;
         let segs: Vec<Rect> = (0..n).map(|i| Rect::new(area.x + i as f32 * sw, area.y, sw, area.h)).collect();
-        let hover = ui.rounded(&self.stage, Rect::new(0.0, area.y + 3.0, sw - 6.0, area.h - 6.0), 7.0, TEXT_PRIMARY.with_opacity(0.05))?;
+        let hover = ui.rounded(&self.stage, Rect::new(0.0, area.y + 3.0, sw - 6.0, area.h - 6.0), 7.0, pal.text.with_opacity(0.06))?;
         hover.SetOpacity(0.0)?;
         let pill = ui.container(&self.stage)?;
         let sel = selected.min(n - 1);
         pill.SetOffset(v3(segs[sel].x + 3.0, area.y + 3.0, 0.0))?;
         let pr = Rect::new(0.0, 0.0, sw - 6.0, area.h - 6.0);
         match pal.style {
+            Style::Classic if pal.is_light() => {
+                ui.relief(&pill, pr, 7.0, &pal.glass(pal.pill, 2.0))?;
+            }
             Style::Classic => {
-                ui.rounded(&pill, pr, 7.0, pill_color(pal.style))?;
+                ui.rounded(&pill, pr, 7.0, pal.pill)?;
             }
             Style::Clay => {
-                ui.relief(&pill, pr, 7.0, &pal.clay(pill_color(pal.style), 2.5))?;
+                ui.relief(&pill, pr, 7.0, &pal.clay(pal.pill, 2.5))?;
             }
-            Style::Neumorphism => {
-                ui.relief(&pill, pr, 7.0, &pal.raised(pill_color(pal.style), 2.5))?;
+            Style::Neumorphism | Style::Glass => {
+                ui.relief(&pill, pr, 7.0, &pal.raised(pal.pill, 2.5))?;
             }
         }
         for (r, l) in segs.iter().zip(labels) {
