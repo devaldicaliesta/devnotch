@@ -12,3 +12,7 @@ Terima kasih sudah tertarik. Proyek ini masih pada tahap perencanaan; baca [`doc
 - **Aset pihak lain:** jangan menyertakan ikon, font, logo, atau karakter milik pihak lain (termasuk Apple dan OpenAI).
 
 Perilaku di ruang proyek mengikuti [Contributor Covenant 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+
+## Alur kontribusi
+
+`main` dilindungi: tidak ada push langsung atau force push, dan setiap perubahan masuk lewat pull request dengan CI `windows-x64` yang hijau. Fork repositori ini, buat cabang, lalu buka pull request ke `main`. Pengaturan proteksinya dijelaskan di [`docs/KEAMANAN-REPO.md`](docs/KEAMANAN-REPO.md).
