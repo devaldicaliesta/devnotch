@@ -86,6 +86,14 @@ const SWIPE_DP: f32 = 36.0;
 const HOUR_MS: Ms = 3_600_000;
 const PEEK_MS: Ms = 2_500;
 const RETRACT_DELAY_MS: u32 = 300;
+/// Kursor harus berhenti sejenak di atas pil yang terlihat sebelum pil melebar (peek).
+/// Kursor yang hanya lewat (misalnya menuju tab browser) tidak membukanya.
+const HOVER_INTENT_MS: u32 = 180;
+/// Gerakan lebih jauh dari ini selama menunggu dianggap "lewat" dan hitungan diulang.
+const HOVER_INTENT_SLOP: f32 = 12.0;
+/// Jeda sebelum pil mengecil lagi setelah kursor keluar, agar tidak berkedip saat kursor
+/// menyentuh tepi pil yang sedang berubah ukuran.
+const LEAVE_GRACE_MS: u32 = 150;
 const COVER_SETTLE_MS: u32 = 150;
 const DOWNLOAD_DEBOUNCE_MS: u32 = 250;
 const DOWNLOAD_POLL_MS: u32 = 1_000;
@@ -778,7 +786,14 @@ impl IslandApp {
             T_COLLAPSE => {
                 self.window.kill_timer(T_COLLAPSE);
                 if !self.island.is_hover() {
-                    self.island.collapse();
+                    if self.cursor_over_region() {
+                        // Keluar palsu: kursor masih di atas kartu. Jangan ditutup; periksa lagi
+                        // nanti sampai gerakan berikutnya mengaktifkan pelacakan kursor.
+                        self.inside = true;
+                        self.window.set_timer(T_COLLAPSE, COLLAPSE_DELAY_MS);
+                    } else {
+                        self.island.collapse();
+                    }
                 }
             }
             T_CONFIG => {
@@ -787,7 +802,18 @@ impl IslandApp {
             }
             T_RETRACT => {
                 self.window.kill_timer(T_RETRACT);
-                self.island.set_hover(false);
+                // Windows kadang mengirim WM_MOUSELEAVE palsu saat region jendela berubah di
+                // bawah kursor (pil sedang melebar). Bila kursor ternyata masih di atas pil,
+                // tetap terbuka; tanpa ini pil buka-tutup berulang (berkedip).
+                if self.cursor_over_region() {
+                    self.inside = true;
+                    self.sync_gaze();
+                    // Pelacakan WM_MOUSELEAVE baru aktif lagi pada gerakan berikutnya; periksa
+                    // ulang berkala agar pil tidak tertahan terbuka bila kursor langsung pergi.
+                    self.window.set_timer(T_RETRACT, RETRACT_DELAY_MS);
+                } else {
+                    self.island.set_hover(false);
+                }
             }
             T_TRIM => {
                 self.window.kill_timer(T_TRIM);
@@ -805,7 +831,7 @@ impl IslandApp {
                 self.window.kill_timer(T_REVEAL);
                 self.reveal_pending = false;
                 self.reveal_anchor = None;
-                if self.inside {
+                if self.inside && self.cursor_over_region() {
                     self.reveal();
                 }
             }
@@ -821,6 +847,15 @@ impl IslandApp {
             }
             _ => {}
         }
+    }
+
+    /// Kursor (posisi layar saat ini) berada di dalam region jendela Island.
+    fn cursor_over_region(&self) -> bool {
+        let s = self.ui.scale;
+        cursor_pos().is_some_and(|(cx, cy)| {
+            let p = Point::new((cx - self.window_origin.0) as f32 / s, (cy - self.window_origin.1) as f32 / s);
+            self.settled_region.contains(p)
+        })
     }
 
     fn reveal(&mut self) {
@@ -992,9 +1027,26 @@ impl IslandApp {
         self.inside = true;
         self.sync_gaze();
         self.window.kill_timer(T_RETRACT);
-        if !self.island.is_hover() {
+        // Selama animasi ukuran, region jendela sementara diperlebar (bantalan animasi). Kursor
+        // di bantalan itu bukan hover: tanpa pemeriksaan ini pil bisa membuka, mengecil, lalu
+        // membuka lagi berulang-ulang saat kursor diam tepat di samping atau di bawah pil.
+        let over = self.settled_region.contains(p);
+        if !self.island.is_hover() && !over {
+            self.reveal_pending = false;
+            self.reveal_anchor = None;
+            self.window.kill_timer(T_REVEAL);
+        } else if !self.island.is_hover() {
             if !self.retracted {
-                self.reveal();
+                // Pil terlihat: tunggu niat hover. Gerakan cepat mengulang hitungan, jadi
+                // kursor yang melintas tidak membuat pil melebar lalu mengecil (berkedip).
+                let moved = self
+                    .reveal_anchor
+                    .is_some_and(|a| (p.x - a.x).abs() > HOVER_INTENT_SLOP || (p.y - a.y).abs() > HOVER_INTENT_SLOP);
+                if !self.reveal_pending || moved {
+                    self.reveal_pending = true;
+                    self.reveal_anchor = Some(p);
+                    self.window.set_timer(T_REVEAL, HOVER_INTENT_MS);
+                }
             } else {
                 let zone = self.cfg.island.hover_zone;
                 let moved = match (self.reveal_anchor, zone.rest_tolerance()) {
@@ -1104,10 +1156,11 @@ impl IslandApp {
         self.release_button();
         let _ = self.track_pointer(None);
         self.sync_gaze();
-        if self.island.tucks() && !self.island.is_expanded() {
-            self.window.set_timer(T_RETRACT, RETRACT_DELAY_MS);
-        } else {
+        if self.island.is_expanded() {
             self.island.set_hover(false);
+        } else if self.island.is_hover() {
+            let delay = if self.island.tucks() { RETRACT_DELAY_MS } else { LEAVE_GRACE_MS };
+            self.window.set_timer(T_RETRACT, delay);
         }
         if self.island.is_expanded() {
             self.window.set_timer(T_COLLAPSE, COLLAPSE_DELAY_MS);
