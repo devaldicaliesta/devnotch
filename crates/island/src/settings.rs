@@ -13,7 +13,7 @@ use notchi_platform_win::window::{Event, IconImage, OwnedWindow, UiProxy, create
 use crate::fx::{self, Burst, Spark};
 use crate::ui::{Align, DynText, Mascot, Tone, Ui, mascot};
 
-pub const SIZE: (f32, f32) = (700.0, 672.0);
+pub const SIZE: (f32, f32) = (700.0, 764.0);
 pub const TAG_PANEL_FX: u64 = 4 << 40;
 
 const M: f32 = 24.0;
@@ -34,6 +34,8 @@ pub enum Setting {
     Liquid,
     Fullscreen,
     AvoidWindows,
+    Position,
+    HoverZone,
     Style,
     Reduce,
     Mascot,
@@ -60,6 +62,8 @@ pub fn value(cfg: &Config, s: Setting) -> usize {
         Setting::Liquid => cfg.liquid as usize,
         Setting::Fullscreen => cfg.island.hide_in_fullscreen as usize,
         Setting::AvoidWindows => cfg.island.avoid_windows as usize,
+        Setting::Position => cfg.island.position.index(),
+        Setting::HoverZone => cfg.island.hover_zone.index(),
         Setting::Style => cfg.style.index(),
         Setting::Reduce => match cfg.reduce_motion {
             ReduceMotion::System => 0,
@@ -272,7 +276,7 @@ impl Settings {
         let left = M;
         let right = M + COL + GAP;
 
-        let mut y = self.section(&ui, left, TOP, COL, t(lang, Text::SecIsland), 116.0 + 3.0 * ROW)?;
+        let mut y = self.section(&ui, left, TOP, COL, t(lang, Text::SecIsland), 116.0 + 5.0 * ROW)?;
         let behavior_row = Rect::new(left, y, COL, 116.0);
         ui.text(&stage, t(lang, Text::Behavior), TextStyle::new(14.0, Weight::Medium, pal.text), Rect::new(left + INNER, y + 10.0, COL - 2.0 * INNER, 22.0), Align::Left)?;
         let seg = Rect::new(left + INNER, y + 38.0, COL - 2.0 * INNER, 32.0);
@@ -290,6 +294,18 @@ impl Settings {
         y += ROW;
         self.divider(&ui, left, y, COL)?;
         self.toggle(&ui, Setting::AvoidWindows, Rect::new(left, y, COL, ROW), t(lang, Text::AvoidWindows), None, cfg)?;
+        y += ROW;
+        self.divider(&ui, left, y, COL)?;
+        let row = Rect::new(left, y, COL, ROW);
+        self.label(&ui, row, t(lang, Text::Position))?;
+        let places = [t(lang, Text::SegCenter), t(lang, Text::SegLeft), t(lang, Text::SegRight)];
+        self.choice(&ui, Setting::Position, Rect::new(row.x + COL - INNER - 180.0, row.y + 7.0, 180.0, 32.0), &places, value(cfg, Setting::Position))?;
+        y += ROW;
+        self.divider(&ui, left, y, COL)?;
+        let row = Rect::new(left, y, COL, ROW);
+        self.label(&ui, row, t(lang, Text::HoverZone))?;
+        let zones = [t(lang, Text::SegSmall), t(lang, Text::SegNormal)];
+        self.choice(&ui, Setting::HoverZone, Rect::new(row.x + COL - INNER - 150.0, row.y + 7.0, 150.0, 32.0), &zones, value(cfg, Setting::HoverZone))?;
         y += ROW;
 
         let mut y2 = self.section(&ui, left, y + 18.0, COL, t(lang, Text::SecLook), 2.0 * ROW)?;
