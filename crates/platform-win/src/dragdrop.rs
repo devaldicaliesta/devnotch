@@ -16,7 +16,10 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
-use windows::Win32::UI::Shell::{DragQueryFileW, HDROP, ILFree, SHCreateDataObject, SHDoDragDrop, SHParseDisplayName};
+use windows::Win32::UI::Shell::{
+    BHID_DataObject, DragQueryFileW, HDROP, ILFree, SHCreateDataObject, SHCreateShellItemArrayFromIDLists, SHDoDragDrop,
+    SHParseDisplayName,
+};
 use windows_core::{HSTRING, Ref, Result, implement};
 
 use crate::window::{Event, UiProxy};
@@ -144,9 +147,22 @@ impl Drop for Pidls {
     }
 }
 
+/// Objek data seperti yang dibuat Explorer saat menyeret berkas: lewat `IShellItemArray`
+/// dan `BHID_DataObject`, sehingga memuat `CF_HDROP` (dibutuhkan Chrome, WhatsApp, email,
+/// dan aplikasi Electron/WebView2), daftar ID shell, nama berkas, dan dukungan gambar seret.
+/// `SHCreateDataObject` saja hanya memuat daftar ID shell, yang diabaikan banyak aplikasi.
+fn data_object(list: &[*const ITEMIDLIST]) -> Result<IDataObject> {
+    unsafe {
+        match SHCreateShellItemArrayFromIDLists(list).and_then(|a| a.BindToHandler::<_, IDataObject>(None, &BHID_DataObject)) {
+            Ok(d) => Ok(d),
+            Err(_) => SHCreateDataObject(None, Some(list), None),
+        }
+    }
+}
+
 /// Seret berkas keluar dari Island. Memblokir sampai tombol mouse dilepas (loop modal OLE).
-/// Mengembalikan efek yang dipilih tujuan.
-pub fn drag_out(paths: &[PathBuf]) -> Result<DROPEFFECT> {
+/// Mengembalikan efek yang dipilih tujuan, atau `DROPEFFECT_NONE` bila dibatalkan.
+pub(crate) fn drag_out(hwnd: HWND, paths: &[PathBuf]) -> Result<DROPEFFECT> {
     let mut pidls = Pidls(Vec::new());
     for p in paths {
         let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
@@ -159,9 +175,10 @@ pub fn drag_out(paths: &[PathBuf]) -> Result<DROPEFFECT> {
         return Ok(DROPEFFECT_NONE);
     }
     let list: Vec<*const ITEMIDLIST> = pidls.0.iter().map(|p| *p as *const _).collect();
-    let data: IDataObject = unsafe { SHCreateDataObject(None, Some(&list), None)? };
+    let data = data_object(&list)?;
     DRAGGING_OUT.store(true, Ordering::SeqCst);
-    let r = unsafe { SHDoDragDrop(None, &data, None, DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0 | DROPEFFECT_LINK.0)) };
+    let allowed = DROPEFFECT(DROPEFFECT_COPY.0 | DROPEFFECT_MOVE.0 | DROPEFFECT_LINK.0);
+    let r = unsafe { SHDoDragDrop(Some(hwnd), &data, None, allowed) };
     DRAGGING_OUT.store(false, Ordering::SeqCst);
     r
 }

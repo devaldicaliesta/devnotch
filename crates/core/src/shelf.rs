@@ -79,6 +79,11 @@ impl Shelf {
         self.items.clear();
     }
 
+    /// Keluarkan berkas tertentu dari rak (misalnya setelah berhasil diseret ke aplikasi lain).
+    pub fn remove_paths(&mut self, paths: &[PathBuf]) {
+        self.items.retain(|i| !paths.iter().any(|p| same(&i.path, p)));
+    }
+
     /// Buang berkas yang sudah tidak ada (misalnya dipindahkan saat diseret keluar).
     pub fn prune(&mut self, exists: impl Fn(&Path) -> bool) -> bool {
         let before = self.items.len();
@@ -119,6 +124,9 @@ mod tests {
         assert!(s.prune(|p| p.ends_with("ada.txt")));
         assert_eq!(s.paths(), vec![pb("C:/ada.txt")]);
         assert!(!s.prune(|_| true));
+        s.add([pb("C:/b.txt"), pb("C:/c.txt")]);
+        s.remove_paths(&[pb("c:/B.TXT")]);
+        assert_eq!(s.paths(), vec![pb("C:/ada.txt"), pb("C:/c.txt")]);
         s.clear();
         assert!(s.is_empty() && s.get(0).is_none());
     }

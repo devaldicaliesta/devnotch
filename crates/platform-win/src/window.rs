@@ -715,6 +715,14 @@ impl Window {
         crate::dragdrop::register(self.hwnd, proxy)
     }
 
+    /// Seret berkas keluar dari jendela ini ke aplikasi lain (loop modal OLE).
+    pub fn drag_files_out(&self, paths: &[std::path::PathBuf]) -> Result<windows::Win32::System::Ole::DROPEFFECT> {
+        unsafe {
+            let _ = ReleaseCapture();
+        }
+        crate::dragdrop::drag_out(self.hwnd, paths)
+    }
+
     /// Lepaskan tangkapan mouse, misalnya sebelum loop seret OLE mengambil alih.
     pub fn release_capture(&self) {
         unsafe {
