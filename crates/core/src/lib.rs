@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
 pub mod activity;
+pub mod bluetooth;
 pub mod color;
 pub mod config;
+pub mod downloads;
 pub mod fmt;
 pub mod geom;
 pub mod hotkey;

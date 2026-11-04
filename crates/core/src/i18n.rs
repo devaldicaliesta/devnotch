@@ -100,6 +100,19 @@ pub enum Text {
     LyricsMissing,
     LyricsOffline,
     Instrumental,
+    Brightness,
+    ScrollBrightness,
+    Downloading,
+    DownloadDone,
+    DownloadsMore,
+    DownloadsCard,
+    DownloadsDesc,
+    OpenFolder,
+    PerSecond,
+    BtConnected,
+    BtDisconnected,
+    BtCard,
+    BtDesc,
 }
 
 pub fn t(lang: Lang, key: Text) -> &'static str {
@@ -275,6 +288,40 @@ pub fn t(lang: Lang, key: Text) -> &'static str {
         (Lang::En, LyricsOffline) => "Lyrics service unreachable",
         (Lang::Id, Instrumental) => "Instrumental",
         (Lang::En, Instrumental) => "Instrumental",
+        (Lang::Id, Brightness) => "Kecerahan",
+        (Lang::En, Brightness) => "Brightness",
+        (Lang::Id, ScrollBrightness) => "Shift + scroll mengatur kecerahan",
+        (Lang::En, ScrollBrightness) => "Shift + scroll sets brightness",
+        (Lang::Id, Downloading) => "Mengunduh",
+        (Lang::En, Downloading) => "Downloading",
+        (Lang::Id, DownloadDone) => "Unduhan selesai",
+        (Lang::En, DownloadDone) => "Download complete",
+        (Lang::Id, DownloadsMore) => "lainnya",
+        (Lang::En, DownloadsMore) => "more",
+        (Lang::Id, DownloadsCard) => "Unduhan",
+        (Lang::En, DownloadsCard) => "Downloads",
+        (Lang::Id, DownloadsDesc) => "Progres unduhan browser dari folder Downloads",
+        (Lang::En, DownloadsDesc) => "Browser download progress from the Downloads folder",
+        (Lang::Id, OpenFolder) => "Buka folder",
+        (Lang::En, OpenFolder) => "Open folder",
+        (Lang::Id, PerSecond) => "dtk",
+        (Lang::En, PerSecond) => "s",
+        (Lang::Id, BtConnected) => "Tersambung",
+        (Lang::En, BtConnected) => "Connected",
+        (Lang::Id, BtDisconnected) => "Terputus",
+        (Lang::En, BtDisconnected) => "Disconnected",
+        (Lang::Id, BtCard) => "Perangkat Bluetooth",
+        (Lang::En, BtCard) => "Bluetooth devices",
+        (Lang::Id, BtDesc) => "Alert saat tersambung atau terputus, dengan baterai",
+        (Lang::En, BtDesc) => "Alert on connect or disconnect, with battery",
+    }
+}
+
+/// Pemisah desimal bahasa: koma untuk Indonesia, titik untuk Inggris.
+pub fn decimal(lang: Lang) -> char {
+    match lang {
+        Lang::Id => ',',
+        Lang::En => '.',
     }
 }
 

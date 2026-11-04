@@ -11,6 +11,8 @@ use std::rc::Rc;
 
 use notchi_core::Ms;
 use notchi_core::activity::{Activities, ActivityKind};
+use notchi_core::bluetooth::Bluetooth;
+use notchi_core::downloads::{Downloads, Partial};
 use notchi_core::color::{self, Color, Skin};
 use notchi_core::config::{self, Config, ReduceMotion, Warning};
 use notchi_core::geom::{Point, Size, scale_for_dpi};
@@ -28,6 +30,8 @@ use notchi_core::spring::SpringPreset;
 use notchi_core::theme::{self, Mode, Style, Theme};
 use notchi_core::timer::{Countdown, Stopwatch};
 use notchi_platform_win::audio::Volume;
+use notchi_platform_win::bluetooth::BluetoothWatcher;
+use notchi_platform_win::brightness::Brightness;
 use notchi_platform_win::comp::{Animator, CompositionHost, CompositionSpriteShape, ContainerVisual, ShapeVisual, v2, v3};
 use notchi_platform_win::gfx::Gfx;
 use notchi_platform_win::media::{MediaCommand, MediaService};
@@ -40,7 +44,7 @@ use notchi_platform_win::{Result, comp, fswatch, net, now_ms, power, privacy, sh
 use crate::fx::{Burst, Spark};
 use crate::settings::{Action, Setting, Settings, TAG_PANEL_FX};
 use crate::ui::{Pill, Ui};
-use crate::views::{Dyn, LyricState, Model, Slot};
+use crate::views::{DownloadInfo, Dyn, LyricState, Model, Slot};
 
 const T_LONG_PRESS: usize = 1;
 const T_COLLAPSE: usize = 2;
@@ -54,6 +58,7 @@ const T_LYRICS: usize = 9;
 const T_REVEAL: usize = 10;
 const T_COVER: usize = 11;
 const T_GAZE: usize = 12;
+const T_DOWNLOADS: usize = 13;
 
 const HK_TOGGLE: i32 = 1;
 const HK_ESC: i32 = 2;
@@ -81,6 +86,10 @@ const HOUR_MS: Ms = 3_600_000;
 const PEEK_MS: Ms = 2_500;
 const RETRACT_DELAY_MS: u32 = 300;
 const COVER_SETTLE_MS: u32 = 150;
+const DOWNLOAD_DEBOUNCE_MS: u32 = 250;
+const DOWNLOAD_POLL_MS: u32 = 1_000;
+/// Langkah kecerahan per takik scroll, dalam persen.
+const BRIGHTNESS_STEP: f32 = 5.0;
 const GAZE_MS: u32 = 66;
 const GAZE_REACH: f32 = 60.0;
 const COLLAPSE_DELAY_MS: u32 = 1_500;
@@ -170,6 +179,7 @@ struct ViewKey {
     presets: Vec<u32>,
     lyric: u8,
     battery: Option<(u8, bool)>,
+    download: Option<(String, usize)>,
 }
 
 struct Content {
@@ -277,6 +287,17 @@ pub struct IslandApp {
     reveal_anchor: Option<Point>,
     esc_registered: bool,
     hotkey_ok: bool,
+    downloads: Downloads,
+    downloads_dir: Option<PathBuf>,
+    downloads_watching: bool,
+    downloads_scan_pending: bool,
+    download_info: Option<DownloadInfo>,
+    last_download: Option<PathBuf>,
+    bluetooth: Bluetooth,
+    bt_watcher: Option<BluetoothWatcher>,
+    brightness: Option<Brightness>,
+    brightness_acc: f32,
+    brightness_warned: bool,
 }
 
 impl std::fmt::Debug for IslandApp {
@@ -301,6 +322,7 @@ fn slot_of(kind: ActivityKind) -> Slot {
     match kind {
         ActivityKind::Timer => Slot::Timer,
         ActivityKind::Stopwatch => Slot::Stopwatch,
+        ActivityKind::Download => Slot::Download,
         _ => Slot::Media,
     }
 }
@@ -435,6 +457,17 @@ impl IslandApp {
             reveal_anchor: None,
             esc_registered: false,
             hotkey_ok: false,
+            downloads: Downloads::new(),
+            downloads_dir: None,
+            downloads_watching: false,
+            downloads_scan_pending: false,
+            download_info: None,
+            last_download: None,
+            bluetooth: Bluetooth::new(),
+            bt_watcher: None,
+            brightness: None,
+            brightness_acc: 0.0,
+            brightness_warned: false,
             cfg: Config::default(),
             cfg_text,
             warnings: Vec::new(),
@@ -442,7 +475,7 @@ impl IslandApp {
         let icon = IconImage { size: 32, rgba: mascot_rgba(32, cfg.mascot.skin) };
         app.tray = TrayIcon::new(&app.window, &icon, t(cfg.language, Text::TrayTooltip)).ok();
         app.apply_config(cfg, warnings, true);
-        fswatch::watch_dir(&app.paths.dir, app.proxy.clone());
+        fswatch::watch_dir(&app.paths.dir, app.proxy.clone(), "notchi-config-watch", || Event::FileChanged);
         if !privacy::watch(app.proxy.clone()) {
             log("indikator privasi tidak tersedia");
         }
@@ -469,6 +502,8 @@ impl IslandApp {
             self.window.unregister_hotkey(HK_TOGGLE);
             self.hotkey_ok = self.window.register_hotkey(HK_TOGGLE, &cfg.island.hotkey);
         }
+        self.sync_sources();
+        let cfg = &self.cfg;
         let filter = SourceFilter { allow: cfg.media.allow.clone(), block: cfg.media.block.clone() };
         match (&self.media, cfg.media.enabled) {
             (None, true) => self.media = Some(MediaService::start(self.proxy.clone(), filter)),
@@ -620,6 +655,7 @@ impl IslandApp {
             Event::MouseUp(_, MouseButton::Middle) => self.on_middle(now),
             Event::MouseDown(..) => {}
             Event::Wheel(delta) => self.on_wheel(delta, now),
+            Event::ShiftWheel(delta) => self.on_shift_wheel(delta, now),
             Event::Timer(id) => self.on_timer(id),
             Event::Hotkey(HK_TOGGLE) => self.island.hotkey(),
             Event::Hotkey(HK_ESC) => self.island.collapse(),
@@ -676,6 +712,27 @@ impl IslandApp {
             }
             Event::Lyrics { track_id, lyrics, failed } => self.on_lyrics(track_id, lyrics, failed),
             Event::FileChanged => self.window.set_timer(T_CONFIG, 300),
+            Event::DownloadsChanged => self.queue_download_scan(DOWNLOAD_DEBOUNCE_MS),
+            Event::Bluetooth(u) => {
+                if let Some(c) = self.bluetooth.apply(u)
+                    && self.cfg.bluetooth.enabled
+                {
+                    let alert = AlertKind::Bluetooth { name: c.name, kind: c.kind, connected: c.connected, battery: c.battery };
+                    self.island.push_alert(alert, now);
+                }
+            }
+            Event::BluetoothRemoved(id) => self.bluetooth.remove(&id),
+            Event::BluetoothReady => self.bluetooth.ready(),
+            Event::Brightness(level) => match level {
+                Some(level) => {
+                    self.island.push_alert(AlertKind::Brightness { level }, now);
+                }
+                None if !self.brightness_warned => {
+                    self.brightness_warned = true;
+                    log("kecerahan tidak bisa diatur: layar tidak mendukung WMI maupun DDC/CI");
+                }
+                None => {}
+            },
             Event::User(tag) => self.on_batch(tag),
             Event::Panel(inner) => self.on_panel(*inner),
             Event::Close | Event::Key(_) => {}
@@ -732,6 +789,11 @@ impl IslandApp {
                 self.check_covered();
             }
             T_GAZE => self.gaze(),
+            T_DOWNLOADS => {
+                self.window.kill_timer(T_DOWNLOADS);
+                self.downloads_scan_pending = false;
+                self.scan_downloads();
+            }
             _ => {}
         }
     }
@@ -1214,6 +1276,14 @@ impl IslandApp {
             self.island.collapse();
             return;
         };
+        if matches!(self.key.as_ref().and_then(|k| k.alert.as_ref()), Some(AlertKind::DownloadDone { .. }))
+            && let Some(path) = self.last_download.clone()
+        {
+            // Klik alert unduhan selesai: tampilkan berkasnya di Explorer.
+            self.island.dismiss_alert();
+            shell::reveal(&path);
+            return;
+        }
         if let Some(b) = self.button_at(p) {
             if pressed == Some(b) {
                 self.press(b, now);
@@ -1272,6 +1342,12 @@ impl IslandApp {
                 self.persist("media", "lyrics", flag(on));
             }
             Button::Mascot => self.boop(),
+            Button::OpenDownloads => {
+                if let Some(dir) = &self.downloads_dir {
+                    shell::open_folder(dir);
+                }
+                self.island.collapse();
+            }
         }
     }
 
@@ -1304,6 +1380,98 @@ impl IslandApp {
     fn start_timer(&mut self, minutes: u32, now: Ms) {
         self.timer = Some(Countdown::start(minutes as Ms * 60_000, now));
         self.done_timer = None;
+    }
+
+    /// Shift + scroll: kecerahan layar. Bila dimatikan, sama dengan scroll biasa.
+    fn on_shift_wheel(&mut self, delta: i32, now: Ms) {
+        if !self.cfg.media.scroll_brightness {
+            return self.on_wheel(delta, now);
+        }
+        if self.retracted {
+            return;
+        }
+        if self.brightness.is_none() {
+            self.brightness = Brightness::start(self.proxy.clone());
+        }
+        self.brightness_acc += delta as f32 / WHEEL_NOTCH as f32 * BRIGHTNESS_STEP;
+        let step = self.brightness_acc.trunc() as i32;
+        if step != 0 {
+            self.brightness_acc -= step as f32;
+            if let Some(b) = &self.brightness {
+                b.step(step);
+            }
+        }
+    }
+
+    /// Mulai atau hentikan sumber aktivitas yang bisa dimatikan di pengaturan.
+    fn sync_sources(&mut self) {
+        if self.cfg.downloads.enabled && !self.downloads_watching {
+            self.downloads_dir = self.downloads_dir.take().or_else(shell::downloads_dir);
+            if let Some(dir) = &self.downloads_dir {
+                self.downloads_watching =
+                    fswatch::watch_dir(dir, self.proxy.clone(), "notchi-downloads-watch", || Event::DownloadsChanged);
+                self.queue_download_scan(DOWNLOAD_DEBOUNCE_MS);
+            }
+        }
+        if !self.cfg.downloads.enabled {
+            self.downloads = Downloads::new();
+            self.window.kill_timer(T_DOWNLOADS);
+            self.downloads_scan_pending = false;
+        }
+        match (self.cfg.bluetooth.enabled, self.bt_watcher.is_some()) {
+            (true, false) => {
+                self.bluetooth = Bluetooth::new();
+                match BluetoothWatcher::start(self.proxy.clone()) {
+                    Ok(w) => self.bt_watcher = Some(w),
+                    Err(e) => log(&format!("pemantau Bluetooth gagal: {e}")),
+                }
+            }
+            (false, true) => self.bt_watcher = None,
+            _ => {}
+        }
+    }
+
+    /// Jadwalkan pindaian folder Downloads. Tidak ditunda ulang selama sudah terjadwal, karena
+    /// browser menulis terus-menerus dan penundaan ulang membuat pindaian tidak pernah jalan.
+    fn queue_download_scan(&mut self, delay: u32) {
+        if self.cfg.downloads.enabled && !self.downloads_scan_pending {
+            self.downloads_scan_pending = true;
+            self.window.set_timer(T_DOWNLOADS, delay);
+        }
+    }
+
+    fn scan_downloads(&mut self) {
+        let Some(dir) = self.downloads_dir.clone() else { return };
+        if !self.cfg.downloads.enabled {
+            return;
+        }
+        let wall = std::time::SystemTime::now();
+        let mut partials = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !notchi_core::downloads::is_partial(&name) {
+                    continue;
+                }
+                let Ok(meta) = e.metadata() else { continue };
+                if !meta.is_file() {
+                    continue;
+                }
+                let idle = meta.modified().ok().and_then(|m| wall.duration_since(m).ok()).map_or(0, |d| d.as_millis() as Ms);
+                partials.push(Partial { name, size: meta.len(), idle_ms: idle });
+            }
+        }
+        let now = now_ms();
+        let done = self.downloads.update(&partials, now, |name| {
+            std::fs::metadata(dir.join(name)).ok().filter(|m| m.is_file()).map(|m| m.len())
+        });
+        if let Some(f) = done.into_iter().last() {
+            self.last_download = Some(dir.join(&f.name));
+            self.island.push_alert(AlertKind::DownloadDone { name: f.name, bytes: f.bytes }, now);
+        }
+        if self.downloads.is_tracking() {
+            self.queue_download_scan(DOWNLOAD_POLL_MS);
+        }
     }
 
     fn on_wheel(&mut self, delta: i32, now: Ms) {
@@ -1457,7 +1625,7 @@ impl IslandApp {
             Event::MouseUp(p, MouseButton::Left) => s.pointer_up(p),
             Event::DpiChanged(_) => s.rescale(&self.cfg).map(|_| None),
             Event::Resized => s.resize().map(|_| None),
-            Event::Wheel(d) => s.wheel(d).map(|_| None),
+            Event::Wheel(d) | Event::ShiftWheel(d) => s.wheel(d).map(|_| None),
             Event::Close | Event::Key(VK_ESCAPE) => {
                 self.close_settings();
                 return;
@@ -1493,6 +1661,9 @@ impl IslandApp {
             Setting::Media => self.persist("media", "enabled", flag(on)),
             Setting::Lyrics => self.persist("media", "lyrics", flag(on)),
             Setting::Scroll => self.persist("media", "scroll_volume", flag(on)),
+            Setting::ScrollBrightness => self.persist("media", "scroll_brightness", flag(on)),
+            Setting::Downloads => self.persist("downloads", "enabled", flag(on)),
+            Setting::Bluetooth => self.persist("bluetooth", "enabled", flag(on)),
             Setting::Sound => self.persist("timer", "sound", flag(on)),
             Setting::Language => self.persist_with(|text| config::set_value(text, "", "language", &quoted(if on { "en" } else { "id" }))),
             Setting::Login => self.persist("startup", "launch_at_login", flag(on)),
@@ -1524,6 +1695,10 @@ impl IslandApp {
         self.acts.set(ActivityKind::Media, media);
         self.acts.set(ActivityKind::Timer, self.timer.is_some());
         self.acts.set(ActivityKind::Stopwatch, self.stopwatch.is_some());
+        self.download_info = self.cfg.downloads.enabled.then(|| self.downloads.active(now)).and_then(|a| {
+            a.first().map(|d| DownloadInfo { name: d.name.clone(), bytes: d.bytes, rate: d.rate, count: a.len() })
+        });
+        self.acts.set(ActivityKind::Download, self.download_info.is_some());
         self.island.set_activity_count(self.acts.len());
         let ordered = self.acts.ordered();
         if ordered.iter().any(|k| !self.last_ordered.contains(k)) {
@@ -1611,6 +1786,7 @@ impl IslandApp {
                 Some(ActivityKind::Media) => Card::Media,
                 Some(ActivityKind::Timer) => Card::Timer,
                 Some(ActivityKind::Stopwatch) => Card::Stopwatch,
+                Some(ActivityKind::Download) => Card::Download,
                 _ => Card::Home,
             }),
             Presentation::Alert(a) if a.is_hud() => ViewKind::Hud,
@@ -1669,6 +1845,7 @@ impl IslandApp {
             kind,
             alert: alert.clone().map(|a| match a {
                 AlertKind::Volume { muted, level } => AlertKind::Volume { muted, level: (level == 0) as u8 },
+                AlertKind::Brightness { .. } => AlertKind::Brightness { level: 0 },
                 other => other,
             }),
             expression,
@@ -1692,6 +1869,7 @@ impl IslandApp {
             } else {
                 None
             },
+            download: self.download_info.as_ref().map(|d| (d.name.clone(), d.count)),
         };
 
         let revealing = self.retracted && !retracted;
@@ -1824,6 +2002,7 @@ impl IslandApp {
             clock: shell::local_time(),
             lyrics: self.lyric_state(),
             battery: self.power,
+            download: self.download_info.as_ref(),
         }
     }
 
@@ -1868,14 +2047,15 @@ impl IslandApp {
             ViewKind::Card(Card::Timer) => views::build_timer_card(&self.ui, &root, false, &m, &mut d)?,
             ViewKind::Card(Card::Stopwatch) => views::build_timer_card(&self.ui, &root, true, &m, &mut d)?,
             ViewKind::Card(Card::Home) => views::build_home_card(&self.ui, &root, &m, &mut d)?,
+            ViewKind::Card(Card::Download) => views::build_download_card(&self.ui, &root, &m, &mut d)?,
             ViewKind::Alert => {
                 if let Some(a) = alert {
                     views::build_alert(&self.ui, &root, a, &m, &mut d)?;
                 }
             }
             ViewKind::Hud => {
-                if let Some(AlertKind::Volume { level, muted }) = alert {
-                    views::build_hud(&self.ui, &root, *level, *muted, &mut d)?;
+                if let Some(a) = alert {
+                    views::build_hud(&self.ui, &root, a, &mut d)?;
                 }
             }
         }
@@ -1925,8 +2105,22 @@ impl IslandApp {
                 panel.show(&self.ui, l, l.index_at(pos, dur))?;
             }
         }
-        if let (Some((bar, width)), Some(AlertKind::Volume { level, muted })) = (d.hud_bar.as_ref(), alert) {
-            let w = if *muted { 0.0 } else { width * *level as f32 / 100.0 };
+        if let (Some(text), Some(dl)) = (d.download.as_mut(), self.download_info.as_ref()) {
+            let s = if matches!(self.key.as_ref().map(|k| k.kind), Some(ViewKind::Card(Card::Download))) {
+                views::download_detail(self.cfg.language, dl)
+            } else {
+                views::download_short(self.cfg.language, dl)
+            };
+            text.set(&self.ui, &s)?;
+        }
+        let hud = match alert {
+            Some(AlertKind::Volume { level, muted }) => Some((*level, *muted)),
+            Some(AlertKind::Brightness { level }) => Some((*level, false)),
+            _ => None,
+        };
+        if let (Some((bar, width)), Some((level, muted))) = (d.hud_bar.as_ref(), hud) {
+            let level = &level;
+            let w = if muted { 0.0 } else { width * *level as f32 / 100.0 };
             self.ui.anim.spring(bar, "Size.X", w, SpringPreset::SNAPPY)?;
             if let Some(t) = d.hud_text.as_mut() {
                 t.set(&self.ui, &level.to_string())?;

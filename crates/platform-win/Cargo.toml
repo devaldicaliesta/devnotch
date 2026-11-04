@@ -13,10 +13,13 @@ notchi-core.workspace = true
 windows-core = "0.62"
 windows-numerics = "0.3"
 windows-future = "0.3"
+windows-collections = "0.3"
 
 [dependencies.windows]
 version = "0.62"
 features = [
+    "Devices",
+    "Devices_Enumeration",
     "Foundation",
     "Foundation_Collections",
     "Graphics",
@@ -27,6 +30,8 @@ features = [
     "UI",
     "UI_Composition",
     "UI_Composition_Desktop",
+    "Win32_Devices",
+    "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",
@@ -49,6 +54,7 @@ features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
+    "Win32_System_Ole",
     "Win32_System_Power",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
@@ -57,6 +63,7 @@ features = [
     "Win32_System_Variant",
     "Win32_System_WinRT",
     "Win32_System_WinRT_Composition",
+    "Win32_System_Wmi",
     "Win32_UI_Accessibility",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",

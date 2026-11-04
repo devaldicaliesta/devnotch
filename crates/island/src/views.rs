@@ -2,7 +2,8 @@ use notchi_core::Ms;
 use notchi_core::color::{self, Color, Skin};
 use notchi_core::fmt::{countdown, elapsed};
 use notchi_core::geom::{Rect, Size};
-use notchi_core::i18n::{Lang, Text, long_date, short_date, t};
+use notchi_core::bluetooth::DeviceKind;
+use notchi_core::i18n::{self, Lang, Text, long_date, short_date, t};
 use notchi_core::island::AlertKind;
 use notchi_core::layout::{self, BATTERY_BADGE, Button};
 use notchi_core::lyrics::Lyrics;
@@ -32,6 +33,14 @@ pub const G_MUTE: &str = "\u{E74F}";
 pub const G_LYRICS: &str = "\u{E720}";
 pub const G_CLOCK: &str = "\u{E823}";
 pub const G_CHEVRON: &str = "\u{E70D}";
+pub const G_DOWNLOAD: &str = "\u{E896}";
+pub const G_BRIGHTNESS: &str = "\u{E706}";
+pub const G_BLUETOOTH: &str = "\u{E702}";
+pub const G_HEADPHONE: &str = "\u{E7F6}";
+pub const G_MOUSE: &str = "\u{E962}";
+pub const G_KEYBOARD: &str = "\u{E765}";
+pub const G_PHONE: &str = "\u{E8EA}";
+pub const G_GAME: &str = "\u{E7FC}";
 
 const LOW_BATTERY: u8 = 20;
 const KNOB: f32 = 12.0;
@@ -41,6 +50,16 @@ pub enum Slot {
     Media,
     Timer,
     Stopwatch,
+    Download,
+}
+
+/// Ringkasan unduhan yang sedang berjalan untuk ditampilkan.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadInfo {
+    pub name: String,
+    pub bytes: u64,
+    pub rate: f64,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +85,7 @@ pub struct Model<'a> {
     pub clock: LocalTime,
     pub lyrics: Option<LyricState<'a>>,
     pub battery: Option<PowerReading>,
+    pub download: Option<&'a DownloadInfo>,
 }
 
 #[derive(Debug)]
@@ -98,6 +118,7 @@ pub struct Dyn {
     pub clock: Option<DynText>,
     pub hud_bar: Option<(SpriteVisual, f32)>,
     pub hud_text: Option<DynText>,
+    pub download: Option<DynText>,
     pub buttons: Vec<(Button, Rect)>,
     pub hosts: Vec<(Button, ContainerVisual)>,
     pub mascot: Option<Mascot>,
@@ -146,7 +167,7 @@ pub fn stopwatch_text(s: &Stopwatch, now: Ms) -> String {
 fn compact_width(slot: Slot) -> f32 {
     match slot {
         Slot::Media => 200.0,
-        Slot::Timer | Slot::Stopwatch => 180.0,
+        Slot::Timer | Slot::Stopwatch | Slot::Download => 180.0,
     }
 }
 
@@ -158,6 +179,10 @@ fn left_icon(ui: &Ui, parent: &ContainerVisual, rect: Rect, slot: Slot, m: &Mode
     match (slot, m.art) {
         (Slot::Media, Some(art)) => {
             ui.image(parent, art, rect, 6.0)?;
+        }
+        (Slot::Download, _) => {
+            let style = TextStyle::new(rect.h * 0.62, Weight::Regular, ui.pal.ink(ui.accent)).icon().centered();
+            ui.text(parent, G_DOWNLOAD, style, rect, Align::Center)?;
         }
         _ if m.mascot_on => {
             d.mascot(mascot(ui, parent, rect, m.skin, m.expression)?, false);
@@ -193,6 +218,67 @@ pub fn build_compact(ui: &Ui, parent: &ContainerVisual, slot: Slot, size: Size, 
                 d.stopwatch = Some(ui.text(parent, &stopwatch_text(sw, m.now), style, text_rect, Align::Right)?);
             }
         }
+        Slot::Download => {
+            if let Some(dl) = m.download {
+                let style = TextStyle::new(14.0, Weight::Semibold, ui.pal.text).tabular();
+                d.download = Some(ui.text(parent, &download_short(m.lang, dl), style, text_rect, Align::Right)?);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Teks pil ringkas: byte yang sudah masuk.
+pub fn download_short(lang: Lang, dl: &DownloadInfo) -> String {
+    notchi_core::fmt::bytes(dl.bytes, i18n::decimal(lang))
+}
+
+/// Teks kartu: byte, kecepatan, dan jumlah unduhan lain.
+pub fn download_detail(lang: Lang, dl: &DownloadInfo) -> String {
+    let dec = i18n::decimal(lang);
+    let mut s = notchi_core::fmt::bytes(dl.bytes, dec);
+    if dl.rate >= 1.0 {
+        s = format!("{s} · {}", notchi_core::fmt::rate(dl.rate, dec, t(lang, Text::PerSecond)));
+    }
+    if dl.count > 1 {
+        s = format!("{s} · +{} {}", dl.count - 1, t(lang, Text::DownloadsMore));
+    }
+    s
+}
+
+pub fn build_download_card(ui: &Ui, parent: &ContainerVisual, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
+    let lay = layout::download_card();
+    ui.surface(parent, lay.icon, lay.icon.w / 2.0, false, ui.pal.well)?;
+    let style = TextStyle::new(20.0, Weight::Regular, ui.pal.ink(ui.accent)).icon().centered();
+    ui.text(parent, G_DOWNLOAD, style, lay.icon, Align::Center)?;
+    let title = m.download.map_or(t(m.lang, Text::Downloading), |dl| dl.name.as_str());
+    ui.text(parent, title, TextStyle::new(15.0, Weight::Semibold, ui.pal.text), lay.title, Align::Left)?;
+    let detail = m.download.map(|dl| download_detail(m.lang, dl)).unwrap_or_default();
+    let sub = TextStyle::new(12.5, Weight::Regular, ui.pal.text_dim).tabular();
+    d.download = Some(ui.text(parent, &detail, sub, lay.subtitle, Align::Left)?);
+
+    // Ukuran total tidak diketahui: bilah progres tak tentu yang bergerak bolak-balik.
+    let bar = lay.bar;
+    if ui.pal.is_flat() {
+        ui.rounded(parent, bar, 2.0, white(ui, 0.2))?;
+    } else {
+        ui.surface(parent, Rect::new(bar.x - 1.0, bar.y - 1.0, bar.w + 2.0, bar.h + 2.0), 3.0, false, ui.pal.well)?;
+    }
+    let clip = ui.container(parent)?;
+    clip.SetOffset(v3(bar.x, bar.y, 0.0))?;
+    clip.SetSize(v2(bar.w, bar.h))?;
+    clip.SetClip(&ui.c.CreateInsetClip()?)?;
+    let seg = bar.w * 0.3;
+    let runner = ui.rounded(&clip, Rect::new(0.0, 0.0, seg, bar.h), 2.0, fill_color(ui))?;
+    if ui.anim.reduce_motion {
+        runner.SetOffset(v3((bar.w - seg) / 2.0, 0.0, 0.0))?;
+    } else {
+        ui.anim.repeat(&runner, "Offset.X", &[(0.0, -seg), (1.0, bar.w)], 1_400.0, 0.0)?;
+    }
+
+    for (b, r) in &lay.buttons {
+        let host = ui.button(parent, *r, t(m.lang, Text::OpenFolder), false, Tone::Neutral)?;
+        d.add(*b, *r, host);
     }
     Ok(())
 }
@@ -208,6 +294,7 @@ pub fn build_bubble(ui: &Ui, parent: &ContainerVisual, slot: Slot, m: &Model<'_>
                 Slot::Media => (G_MUSIC, ui.pal.ink(m.skin.color())),
                 Slot::Timer => (G_STOPWATCH, timer_color(ui)),
                 Slot::Stopwatch => (G_STOPWATCH, ui.pal.text),
+                Slot::Download => (G_DOWNLOAD, ui.pal.ink(ui.accent)),
             };
             let style = TextStyle::new(15.0, Weight::Regular, c).icon().centered();
             ui.text(parent, glyph, style, r, Align::Center)?;
@@ -577,7 +664,17 @@ pub fn build_peek_media(ui: &Ui, parent: &ContainerVisual, size: Size, m: &Model
 
 pub fn build_alert(ui: &Ui, parent: &ContainerVisual, alert: &AlertKind, m: &Model<'_>, d: &mut Dyn) -> Result<()> {
     let lay = layout::alert_card();
-    if m.mascot_on {
+    let glyph = match alert {
+        AlertKind::Bluetooth { kind, .. } => Some(device_glyph(*kind)),
+        AlertKind::DownloadDone { .. } => Some(G_DOWNLOAD),
+        _ => None,
+    };
+    if let Some(g) = glyph {
+        // Ikon perangkat/unduhan lebih jelas daripada maskot untuk alert ini.
+        ui.surface(parent, lay.mascot, lay.mascot.w / 2.0, false, ui.pal.well)?;
+        let style = TextStyle::new(20.0, Weight::Regular, ui.pal.ink(ui.accent)).icon().centered();
+        ui.text(parent, g, style, lay.mascot, Align::Center)?;
+    } else if m.mascot_on {
         d.mascot(mascot(ui, parent, lay.mascot, m.skin, m.expression)?, false);
     }
     let pct = |p: Option<u8>| p.map(|p| format!("{p}%")).unwrap_or_default();
@@ -593,6 +690,21 @@ pub fn build_alert(ui: &Ui, parent: &ContainerVisual, alert: &AlertKind, m: &Mod
             (t(m.lang, Text::TimerDone), total, String::new(), timer_color(ui))
         }
         AlertKind::Volume { .. } => (t(m.lang, Text::Volume), String::new(), String::new(), ui.pal.text),
+        AlertKind::Brightness { .. } => (t(m.lang, Text::Brightness), String::new(), String::new(), ui.pal.text),
+        AlertKind::DownloadDone { name, bytes } => (
+            t(m.lang, Text::DownloadDone),
+            name.clone(),
+            notchi_core::fmt::bytes(*bytes, i18n::decimal(m.lang)),
+            ui.pal.ink(ui.accent),
+        ),
+        AlertKind::Bluetooth { name, connected, battery, .. } => {
+            let state = t(m.lang, if *connected { Text::BtConnected } else { Text::BtDisconnected });
+            let accent = match battery {
+                Some(b) if *b <= LOW_BATTERY => ui.pal.ink(color::STATUS_CRITICAL),
+                _ => ui.pal.ink(ui.accent),
+            };
+            (name.as_str(), state.to_string(), pct(*battery), accent)
+        }
     };
     let title_rect = if subtitle.is_empty() { Rect::new(lay.title.x, 0.0, lay.title.w, layout::EXPANDED_MIN_H) } else { lay.title };
     ui.text(parent, title, TextStyle::new(15.0, Weight::Semibold, ui.pal.text), title_rect, Align::Left)?;
@@ -600,14 +712,31 @@ pub fn build_alert(ui: &Ui, parent: &ContainerVisual, alert: &AlertKind, m: &Mod
         ui.text(parent, &subtitle, TextStyle::new(13.0, Weight::Regular, ui.pal.text_dim).tabular(), lay.subtitle, Align::Left)?;
     }
     if !value.is_empty() {
-        ui.text(parent, &value, TextStyle::new(28.0, Weight::Semibold, accent).tabular(), lay.value, Align::Right)?;
+        let size = if value.chars().count() > 4 { 17.0 } else { 28.0 };
+        ui.text(parent, &value, TextStyle::new(size, Weight::Semibold, accent).tabular(), lay.value, Align::Right)?;
     }
     Ok(())
 }
 
-pub fn build_hud(ui: &Ui, parent: &ContainerVisual, level: u8, muted: bool, d: &mut Dyn) -> Result<()> {
+/// Glyph untuk ikon perangkat Bluetooth di alert.
+pub fn device_glyph(kind: DeviceKind) -> &'static str {
+    match kind {
+        DeviceKind::Audio => G_HEADPHONE,
+        DeviceKind::Mouse => G_MOUSE,
+        DeviceKind::Keyboard => G_KEYBOARD,
+        DeviceKind::Phone => G_PHONE,
+        DeviceKind::Controller => G_GAME,
+        DeviceKind::Other => G_BLUETOOTH,
+    }
+}
+
+pub fn build_hud(ui: &Ui, parent: &ContainerVisual, alert: &AlertKind, d: &mut Dyn) -> Result<()> {
     let size = layout::HUD;
-    let glyph = if muted || level == 0 { G_MUTE } else { G_VOLUME };
+    let (glyph, level) = match *alert {
+        AlertKind::Volume { level, muted } => (if muted || level == 0 { G_MUTE } else { G_VOLUME }, level),
+        AlertKind::Brightness { level } => (G_BRIGHTNESS, level),
+        _ => return Ok(()),
+    };
     let icon = Rect::new(10.0, 0.0, 24.0, size.h);
     ui.text(parent, glyph, TextStyle::new(15.0, Weight::Regular, ui.pal.text).icon().centered(), icon, Align::Center)?;
     let track = Rect::new(42.0, (size.h - 4.0) / 2.0, size.w - 42.0 - 48.0, 4.0);
