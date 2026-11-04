@@ -514,6 +514,7 @@ mod tests {
             assert_eq!(size.h, PILL_H);
         }
         const { assert!(PEEK_IDLE.w > IDLE.w && PEEK_MEDIA.w > COMPACT_MAX_W) };
+        const { assert!(BUDDY.w < IDLE.w && BUDDY.h == PILL_H && BUDDY_MASCOT < BUDDY.h) };
     }
 
     #[test]
