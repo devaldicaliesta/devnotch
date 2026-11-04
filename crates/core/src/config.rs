@@ -40,8 +40,19 @@ pub struct MediaConfig {
     pub allow: Vec<String>,
     pub block: Vec<String>,
     pub scroll_volume: bool,
+    pub scroll_brightness: bool,
     pub paused_linger_seconds: u32,
     pub lyrics: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadsConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BluetoothConfig {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +76,8 @@ pub struct Config {
     pub mascot: MascotConfig,
     pub media: MediaConfig,
     pub power: PowerConfig,
+    pub downloads: DownloadsConfig,
+    pub bluetooth: BluetoothConfig,
     pub timer: TimerConfig,
     pub reduce_motion: ReduceMotion,
     pub liquid: bool,
@@ -94,10 +107,13 @@ impl Default for Config {
                 allow: Vec::new(),
                 block: Vec::new(),
                 scroll_volume: true,
+                scroll_brightness: true,
                 paused_linger_seconds: 60,
                 lyrics: false,
             },
             power: PowerConfig { enabled: true, low_thresholds: vec![20, 10] },
+            downloads: DownloadsConfig { enabled: true },
+            bluetooth: BluetoothConfig { enabled: true },
             timer: TimerConfig { presets_minutes: vec![1, 5, 10, 25], sound: true },
             reduce_motion: ReduceMotion::System,
             liquid: true,
@@ -160,6 +176,9 @@ allow = []
 block = []
 # Scroll di atas pil untuk mengatur volume.
 scroll_volume = true
+# Shift + scroll di atas pil untuk mengatur kecerahan layar (layar laptop, atau monitor
+# eksternal yang mendukung DDC/CI).
+scroll_brightness = true
 # Berapa detik media yang dijeda tetap tampil (0–3600).
 paused_linger_seconds = 60
 # Lirik tersinkron dari lrclib.net (cadangan: lyrics.ovh). Judul, artis, album, dan durasi lagu
@@ -170,6 +189,15 @@ lyrics = false
 enabled = true
 # Alert baterai rendah, dalam persen.
 low_thresholds = [20, 10]
+
+[downloads]
+# Tampilkan unduhan browser yang sedang berjalan dan alert saat selesai. Dibaca dari berkas
+# sementara (.crdownload, .part) di folder Downloads; ukuran totalnya tidak diketahui.
+enabled = true
+
+[bluetooth]
+# Alert saat perangkat Bluetooth tersambung atau terputus, beserta baterainya bila dilaporkan.
+enabled = true
 
 [timer]
 # Tombol timer cepat di kartu beranda, dalam menit (maks. 5 tombol).
@@ -338,7 +366,9 @@ const KNOWN: &[(&str, &[&str])] = &[
     ("island", &["behavior", "hotkey", "hide_in_fullscreen", "avoid_windows", "x", "position", "hover_zone", "side_mascot", "mode", "autohide", "top_margin"]),
     ("appearance", &["style", "theme"]),
     ("mascot", &["enabled", "skin"]),
-    ("media", &["enabled", "allow", "block", "scroll_volume", "paused_linger_seconds", "lyrics"]),
+    ("media", &["enabled", "allow", "block", "scroll_volume", "scroll_brightness", "paused_linger_seconds", "lyrics"]),
+    ("downloads", &["enabled"]),
+    ("bluetooth", &["enabled"]),
     ("power", &["enabled", "low_thresholds"]),
     ("timer", &["presets_minutes", "sound"]),
     ("motion", &["reduce", "liquid"]),
@@ -431,6 +461,9 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
     let allow = r.string_list("media.allow", 64);
     let block = r.string_list("media.block", 64);
     let scroll_volume = r.bool("media.scroll_volume", d.media.scroll_volume);
+    let scroll_brightness = r.bool("media.scroll_brightness", d.media.scroll_brightness);
+    let downloads_enabled = r.bool("downloads.enabled", d.downloads.enabled);
+    let bluetooth_enabled = r.bool("bluetooth.enabled", d.bluetooth.enabled);
     let linger = r.int("media.paused_linger_seconds", 0, 3600, d.media.paused_linger_seconds as i64) as u32;
     let lyrics = r.bool("media.lyrics", d.media.lyrics);
 
@@ -460,7 +493,9 @@ pub fn parse(text: &str) -> (Config, Vec<Warning>) {
         style,
         theme,
         mascot: MascotConfig { enabled: mascot_enabled, skin },
-        media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, paused_linger_seconds: linger, lyrics },
+        media: MediaConfig { enabled: media_enabled, allow, block, scroll_volume, scroll_brightness, paused_linger_seconds: linger, lyrics },
+        downloads: DownloadsConfig { enabled: downloads_enabled },
+        bluetooth: BluetoothConfig { enabled: bluetooth_enabled },
         power: PowerConfig { enabled: power_enabled, low_thresholds: thresholds.into_iter().map(|t| t as u8).collect() },
         timer: TimerConfig { presets_minutes: presets.into_iter().map(|t| t as u32).collect(), sound },
         reduce_motion,
@@ -702,6 +737,18 @@ low_thresholds = [15, 0, "x"]
         let (c, w) = parse(&set_value(DEFAULT_TOML, "island", "side_mascot", "false"));
         assert!(w.is_empty(), "{w:?}");
         assert!(!c.island.side_mascot);
+    }
+
+    #[test]
+    fn unduhan_bluetooth_dan_kecerahan() {
+        let d = Config::default();
+        assert!(d.downloads.enabled && d.bluetooth.enabled && d.media.scroll_brightness);
+        let out = set_value(DEFAULT_TOML, "downloads", "enabled", "false");
+        let out = set_value(&out, "bluetooth", "enabled", "false");
+        let out = set_value(&out, "media", "scroll_brightness", "false");
+        let (c, w) = parse(&out);
+        assert!(w.is_empty(), "{w:?}");
+        assert!(!c.downloads.enabled && !c.bluetooth.enabled && !c.media.scroll_brightness);
     }
 
     #[test]

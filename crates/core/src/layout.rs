@@ -30,6 +30,7 @@ pub enum Card {
     Lyrics,
     Timer,
     Stopwatch,
+    Download,
 }
 
 impl Card {
@@ -38,7 +39,7 @@ impl Card {
             Card::Home => 132.0,
             Card::Media => 168.0,
             Card::Lyrics => 240.0,
-            Card::Timer | Card::Stopwatch => 112.0,
+            Card::Timer | Card::Stopwatch | Card::Download => 112.0,
         };
         h.clamp(EXPANDED_MIN_H, EXPANDED_MAX_H)
     }
@@ -268,6 +269,7 @@ pub enum Button {
     StartStopwatch,
     Lyrics,
     Mascot,
+    OpenDownloads,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -349,6 +351,32 @@ pub fn timer_card(stopwatch: bool) -> TimerCard {
         label: Rect::new(tx, 24.0, x1 - tx - 8.0, 16.0),
         time: Rect::new(tx, 40.0, x1 - tx - 8.0, 44.0),
         buttons,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadCard {
+    pub icon: Rect,
+    pub title: Rect,
+    pub subtitle: Rect,
+    pub bar: Rect,
+    pub buttons: Vec<(Button, Rect)>,
+}
+
+/// Kartu unduhan: ikon, nama berkas, byte dan kecepatan, bilah progres tak tentu, tombol folder.
+pub fn download_card() -> DownloadCard {
+    let w = EXPANDED_W;
+    let h = Card::Download.height();
+    let icon = Rect::new(PAD + 2.0, PAD + 2.0, 44.0, 44.0);
+    let tx = icon.x + icon.w + 14.0;
+    let button = Rect::new(w - PAD - 112.0, PAD + 8.0, 112.0, 32.0);
+    let tw = button.x - tx - 10.0;
+    DownloadCard {
+        icon,
+        title: Rect::new(tx, PAD + 2.0, tw, 22.0),
+        subtitle: Rect::new(tx, PAD + 26.0, tw, 18.0),
+        bar: Rect::new(PAD, h - PAD - 16.0, w - 2.0 * PAD, 4.0),
+        buttons: vec![(Button::OpenDownloads, button)],
     }
 }
 
@@ -459,7 +487,7 @@ mod tests {
         assert_eq!(IDLE, Size::new(126.0, 37.0));
         assert_eq!(compact_size(10.0).w, 160.0);
         assert_eq!(compact_size(999.0).w, 240.0);
-        for c in [Card::Home, Card::Media, Card::Lyrics, Card::Timer, Card::Stopwatch] {
+        for c in [Card::Home, Card::Media, Card::Lyrics, Card::Timer, Card::Stopwatch, Card::Download] {
             let h = c.height();
             assert!((EXPANDED_MIN_H..=EXPANDED_MAX_H).contains(&h), "{c:?}");
         }
@@ -621,6 +649,14 @@ mod tests {
             }
             let (_, lb) = mc.buttons.iter().find(|(b, _)| *b == Button::Lyrics).unwrap();
             assert!(mc.title.x + mc.title.w <= lb.x, "judul tidak menabrak tombol lirik");
+        }
+        let dc = download_card();
+        for r in [dc.icon, dc.title, dc.subtitle, dc.bar] {
+            assert!(inside(Card::Download.size(), &r), "{r:?}");
+        }
+        for (_, r) in &dc.buttons {
+            assert!(inside(Card::Download.size(), r) && dc.title.x + dc.title.w <= r.x, "{r:?}");
+            assert!(r.y + r.h < dc.bar.y);
         }
         for sw in [false, true] {
             let tc = timer_card(sw);

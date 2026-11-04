@@ -28,7 +28,10 @@ pub fn expression_for(ctx: MascotContext<'_>) -> Expression {
             AlertKind::LowBattery { .. } => Expression::Sleepy,
             AlertKind::Volume { .. } if ctx.media_playing => Expression::Listening,
             AlertKind::Volume { .. } => Expression::Idle,
-            AlertKind::Unplugged { .. } | AlertKind::TimerDone => Expression::Surprised,
+            AlertKind::Brightness { .. } => Expression::Idle,
+            AlertKind::Bluetooth { connected: true, .. } => Expression::Surprised,
+            AlertKind::Bluetooth { connected: false, .. } => Expression::Neutral,
+            AlertKind::Unplugged { .. } | AlertKind::TimerDone | AlertKind::DownloadDone { .. } => Expression::Surprised,
         };
     }
     match ctx.primary {

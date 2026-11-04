@@ -41,8 +41,8 @@ Setiap node menyebut `src=<file> loc=L<baris>`, jadi langsung bisa dibuka.
 
 | Crate | Isi |
 | --- | --- |
-| `crates/core` | Logika murni yang bisa diuji di semua OS: state Island (`island.rs`), tata letak (`layout.rs`), konfigurasi (`config.rs`), tema/palet (`theme.rs`), teks (`i18n.rs`), media, timer, lirik. |
-| `crates/platform-win` | Pembungkus Win32/WinRT: jendela, komposisi, Direct2D (`gfx.rs`), media, registry (`shell.rs`). |
+| `crates/core` | Logika murni yang bisa diuji di semua OS: state Island (`island.rs`), tata letak (`layout.rs`), konfigurasi (`config.rs`), tema/palet (`theme.rs`), teks (`i18n.rs`), media, timer, lirik, pelacak unduhan (`downloads.rs`), pelacak Bluetooth (`bluetooth.rs`). |
+| `crates/platform-win` | Pembungkus Win32/WinRT: jendela, komposisi, Direct2D (`gfx.rs`), media, registry dan folder (`shell.rs`), `DeviceWatcher` Bluetooth (`bluetooth.rs`), kecerahan WMI/DDC-CI (`brightness.rs`). |
 | `crates/island` | Aplikasi Island: `lib.rs` (event, render, drag, region), `views.rs` (isi pil/kartu), `ui.rs` (primitif gambar), `settings.rs` (jendela Pengaturan). |
 | `crates/app` | Titik masuk `Notchi.exe`. |
 

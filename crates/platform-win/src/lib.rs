@@ -1,6 +1,8 @@
 #![cfg(windows)]
 
 pub mod audio;
+pub mod bluetooth;
+pub mod brightness;
 pub mod comp;
 pub mod fswatch;
 pub mod gfx;

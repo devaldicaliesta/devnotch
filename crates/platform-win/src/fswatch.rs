@@ -10,7 +10,8 @@ use windows_core::HSTRING;
 
 use crate::window::{Event, UiProxy};
 
-pub fn watch_dir(dir: &Path, proxy: UiProxy) -> bool {
+/// Pantau perubahan isi folder; `event` dibuat ulang untuk setiap perubahan.
+pub fn watch_dir(dir: &Path, proxy: UiProxy, name: &str, event: fn() -> Event) -> bool {
     let path = HSTRING::from(dir.as_os_str());
     let handle = match unsafe {
         FindFirstChangeNotificationW(
@@ -23,7 +24,7 @@ pub fn watch_dir(dir: &Path, proxy: UiProxy) -> bool {
         _ => return false,
     };
     std::thread::Builder::new()
-        .name("notchi-config-watch".into())
+        .name(name.into())
         .spawn(move || {
             let h = windows::Win32::Foundation::HANDLE(handle as *mut _);
             loop {
@@ -31,7 +32,7 @@ pub fn watch_dir(dir: &Path, proxy: UiProxy) -> bool {
                 if r != WAIT_OBJECT_0 {
                     break;
                 }
-                proxy.post(Event::FileChanged);
+                proxy.post(event());
                 if unsafe { FindNextChangeNotification(h) }.is_err() {
                     break;
                 }

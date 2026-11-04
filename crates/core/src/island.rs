@@ -1,5 +1,6 @@
 use crate::Ms;
 use crate::activity::Priority;
+use crate::bluetooth::DeviceKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Behavior {
@@ -36,12 +37,16 @@ pub enum AlertKind {
     LowBattery { percent: u8, critical: bool },
     TimerDone,
     Volume { level: u8, muted: bool },
+    Brightness { level: u8 },
+    DownloadDone { name: String, bytes: u64 },
+    Bluetooth { name: String, kind: DeviceKind, connected: bool, battery: Option<u8> },
 }
 
 impl AlertKind {
     pub fn priority(&self) -> Priority {
         match self {
-            AlertKind::Volume { .. } => Priority::P4,
+            AlertKind::Volume { .. } | AlertKind::Brightness { .. } => Priority::P4,
+            AlertKind::DownloadDone { .. } | AlertKind::Bluetooth { .. } => Priority::P3,
             AlertKind::TimerDone => Priority::P2,
             _ => Priority::P1,
         }
@@ -49,14 +54,15 @@ impl AlertKind {
 
     pub fn duration(&self) -> Ms {
         match self {
-            AlertKind::Volume { .. } => 1_500,
-            AlertKind::Charging { .. } | AlertKind::Unplugged { .. } => 3_000,
+            AlertKind::Volume { .. } | AlertKind::Brightness { .. } => 1_500,
+            AlertKind::Charging { .. } | AlertKind::Unplugged { .. } | AlertKind::Bluetooth { .. } => 3_000,
+            AlertKind::DownloadDone { .. } => 4_000,
             AlertKind::LowBattery { .. } | AlertKind::TimerDone => 5_000,
         }
     }
 
     pub fn is_hud(&self) -> bool {
-        matches!(self, AlertKind::Volume { .. })
+        matches!(self, AlertKind::Volume { .. } | AlertKind::Brightness { .. })
     }
 }
 
@@ -364,6 +370,18 @@ mod tests {
             "HUD tampil setelah kartu ditutup"
         );
         assert_eq!(i.presentation(2_000), Presentation::Compact);
+    }
+
+    #[test]
+    fn prioritas_alert_baru() {
+        let mut i = Island::new(Behavior::Sticky);
+        let done = AlertKind::DownloadDone { name: "a.zip".into(), bytes: 1 };
+        assert!(i.push_alert(done.clone(), 0));
+        assert!(!i.push_alert(AlertKind::Brightness { level: 50 }, 10), "HUD kecerahan tidak menimpa unduhan selesai");
+        let bt = AlertKind::Bluetooth { name: "Buds".into(), kind: DeviceKind::Audio, connected: true, battery: Some(80) };
+        assert!(i.push_alert(bt.clone(), 20), "prioritas sama: yang terbaru tampil");
+        assert_eq!(i.presentation(30), Presentation::Alert(bt));
+        assert!(AlertKind::Brightness { level: 1 }.is_hud());
     }
 
     #[test]

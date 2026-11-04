@@ -66,6 +66,37 @@ pub fn chime() {
     }
 }
 
+/// Folder Downloads milik pengguna (bisa sudah dipindah dari lokasi default).
+pub fn downloads_dir() -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{FOLDERID_Downloads, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+    unsafe {
+        let p = SHGetKnownFolderPath(&FOLDERID_Downloads, KF_FLAG_DEFAULT, None).ok()?;
+        let path = p.to_string().ok().map(std::path::PathBuf::from);
+        CoTaskMemFree(Some(p.0 as *const _));
+        path
+    }
+}
+
+/// Buka Explorer dengan berkas itu terpilih; bila berkasnya tidak ada, buka foldernya.
+pub fn reveal(path: &std::path::Path) {
+    if path.is_file() {
+        let args = HSTRING::from(format!("/select,\"{}\"", path.display()));
+        unsafe {
+            ShellExecuteW(None, w!("open"), w!("explorer.exe"), &args, None, SW_SHOWNORMAL);
+        }
+    } else if let Some(dir) = path.parent().filter(|_| !path.is_dir()).or(Some(path)) {
+        open_folder(dir);
+    }
+}
+
+pub fn open_folder(dir: &std::path::Path) {
+    let dir = HSTRING::from(dir.as_os_str());
+    unsafe {
+        ShellExecuteW(None, w!("open"), &dir, None, None, SW_SHOWNORMAL);
+    }
+}
+
 pub fn edit_text_file(path: &std::path::Path) {
     let file = HSTRING::from(path.as_os_str());
     unsafe {

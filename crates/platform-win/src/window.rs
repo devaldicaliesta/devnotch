@@ -89,6 +89,8 @@ pub enum Event {
     MouseDown(Point, MouseButton),
     MouseUp(Point, MouseButton),
     Wheel(i32),
+    /// Scroll sambil menahan Shift.
+    ShiftWheel(i32),
     Timer(usize),
     Hotkey(i32),
     DpiChanged(u32),
@@ -107,6 +109,11 @@ pub enum Event {
     Media(Option<MediaSnapshot>),
     MediaArt { track_id: u64, art: Option<Artwork> },
     FileChanged,
+    DownloadsChanged,
+    Bluetooth(notchi_core::bluetooth::Update),
+    BluetoothRemoved(String),
+    BluetoothReady,
+    Brightness(Option<u8>),
     User(u64),
     Close,
     Key(u32),
@@ -270,7 +277,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         WM_RBUTTONDOWN => send(Event::MouseDown(mouse_point(hwnd, lparam), MouseButton::Right)),
         WM_RBUTTONUP => send(Event::MouseUp(mouse_point(hwnd, lparam), MouseButton::Right)),
         WM_MBUTTONUP => send(Event::MouseUp(mouse_point(hwnd, lparam), MouseButton::Middle)),
-        WM_MOUSEWHEEL => send(Event::Wheel(((wparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32)),
+        WM_MOUSEWHEEL => {
+            const MK_SHIFT: usize = 0x0004;
+            let delta = ((wparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
+            send(if wparam.0 & MK_SHIFT != 0 { Event::ShiftWheel(delta) } else { Event::Wheel(delta) })
+        }
         WM_TIMER => send(Event::Timer(wparam.0)),
         WM_HOTKEY => send(Event::Hotkey(wparam.0 as i32)),
         WM_DPICHANGED => {
