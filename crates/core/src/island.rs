@@ -129,8 +129,9 @@ impl Island {
         self.covered
     }
 
+    /// Menempel berarti selalu tampil, jadi jendela di bawahnya tidak membuatnya menyingkir.
     pub fn tucks(&self) -> bool {
-        self.autohide() || self.covered
+        self.autohide() || (self.covered && self.behavior != Behavior::Sticky)
     }
 
     pub fn peek(&mut self, until: Ms) {
@@ -412,7 +413,14 @@ mod tests {
 
     #[test]
     fn menyingkir_saat_jendela_menempati_tepi_atas() {
-        let mut i = Island::new(Behavior::Sticky);
+        let mut sticky = Island::new(Behavior::Sticky);
+        sticky.set_activity_count(1);
+        sticky.set_covered(true);
+        assert!(!sticky.tucks() && !sticky.is_retracted(0), "menempel tetap tampil di atas browser");
+        sticky.set_activity_count(0);
+        assert!(!sticky.is_retracted(0));
+
+        let mut i = Island::new(Behavior::Hide);
         i.set_activity_count(1);
         assert!(!i.is_retracted(0));
         i.set_covered(true);

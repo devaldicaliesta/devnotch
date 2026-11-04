@@ -17,6 +17,7 @@ use notchi_core::geom::{Point, Size, scale_for_dpi};
 use notchi_core::i18n::{Lang, Text, t};
 use notchi_core::icon::mascot_rgba;
 use notchi_core::island::{AlertKind, Behavior, Island, Presentation};
+use notchi_core::geom::Rect;
 use notchi_core::layout::{self, BUBBLE, BUBBLE_GAP, Button, Card, HOVER_SCALE, HoverZone, Placement, Shape};
 use notchi_core::lyrics::{Lyrics, Query};
 use notchi_core::mascot::{Expression, MascotContext, expression_for};
@@ -74,6 +75,7 @@ const M_QUIT: u32 = 900;
 
 const VK_ESCAPE: u32 = 0x1B;
 const LONG_PRESS_MS: u32 = 350;
+const DRAG_DP: f32 = 6.0;
 const SWIPE_DP: f32 = 36.0;
 const HOUR_MS: Ms = 3_600_000;
 const PEEK_MS: Ms = 2_500;
@@ -217,8 +219,8 @@ pub struct IslandApp {
     scale_rest: f32,
     last_ordered: Vec<ActivityKind>,
     full_shape: Shape,
-    region: Size,
-    settled_region: Size,
+    region: Rect,
+    settled_region: Rect,
     watching: bool,
     mem_dirty: bool,
     content: Option<Content>,
@@ -229,6 +231,9 @@ pub struct IslandApp {
     visible: bool,
     window_px: (i32, i32),
     window_origin: (i32, i32),
+    anchor_px: Option<i32>,
+    drag: Option<(i32, i32)>,
+    dragging: bool,
     gazing: bool,
     gaze_last: Option<(i32, i32)>,
     morph_seq: u64,
@@ -277,6 +282,18 @@ impl std::fmt::Debug for IslandApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IslandApp").field("shape", &self.shape).field("visible", &self.visible).finish()
     }
+}
+
+fn rect_union(a: Rect, b: Rect) -> Rect {
+    if a.w <= 0.0 {
+        return b;
+    }
+    if b.w <= 0.0 {
+        return a;
+    }
+    let x0 = a.x.min(b.x);
+    let x1 = (a.x + a.w).max(b.x + b.w);
+    Rect::new(x0, 0.0, x1 - x0, a.h.max(b.h))
 }
 
 fn slot_of(kind: ActivityKind) -> Slot {
@@ -359,8 +376,8 @@ impl IslandApp {
             scale_rest: 1.0,
             last_ordered: Vec::new(),
             full_shape: Shape::single(layout::IDLE),
-            region: Size::new(0.0, 0.0),
-            settled_region: Size::new(0.0, 0.0),
+            region: Rect::new(0.0, 0.0, 0.0, 0.0),
+            settled_region: Rect::new(0.0, 0.0, 0.0, 0.0),
             watching: false,
             mem_dirty: true,
             content: None,
@@ -371,6 +388,9 @@ impl IslandApp {
             visible: false,
             window_px: (0, 0),
             window_origin: (0, 0),
+            anchor_px: None,
+            drag: None,
+            dragging: false,
             gazing: false,
             gaze_last: None,
             morph_seq: 0,
@@ -495,7 +515,8 @@ impl IslandApp {
         self.update_tooltip();
         self.sync_settings();
         self.key = None;
-        if !first && old.island.position != self.cfg.island.position {
+        if !first && old.island.x != self.cfg.island.x && self.drag.is_none() {
+            self.anchor_px = None;
             self.layout_window();
         }
         if !first && old.island.hover_zone != self.cfg.island.hover_zone {
@@ -504,7 +525,7 @@ impl IslandApp {
         }
         if first
             || old.island.avoid_windows != self.cfg.island.avoid_windows
-            || old.island.position != self.cfg.island.position
+            || old.island.x != self.cfg.island.x
         {
             self.check_covered();
         }
@@ -543,6 +564,11 @@ impl IslandApp {
 
     fn persist(&mut self, section: &str, key: &str, value: &str) {
         self.persist_with(|text| config::set_value(text, section, key, value));
+    }
+
+    fn persist_x(&mut self, x: f32) {
+        let value = format!("{:.4}", x.clamp(0.0, 1.0));
+        self.persist_with(|text| config::set_value(&config::remove_value(text, "island", "position"), "island", "x", &value));
     }
 
     fn persist_behavior(&mut self, b: Behavior) {
@@ -584,6 +610,7 @@ impl IslandApp {
             Event::Hotkey(HK_ESC) => self.island.collapse(),
             Event::Hotkey(_) => {}
             Event::DpiChanged(_) | Event::DisplayChanged => self.on_display(),
+            Event::Resized => {}
             Event::SettingsChanged => self.refresh_motion(),
             Event::PowerChanged => {
                 let reading = power::read();
@@ -805,8 +832,7 @@ impl IslandApp {
     fn check_covered(&mut self) {
         let covered = self.cfg.island.avoid_windows && {
             let mon = primary_monitor();
-            let (wx, ww, _) = self.window_bounds(&mon);
-            let x = wx + ww / 2;
+            let x = self.anchor(&mon);
             let y = mon.top + (layout::PILL_H * self.ui.scale).round() as i32 - 1;
             self.window.app_beneath(x, y)
         };
@@ -823,6 +849,7 @@ impl IslandApp {
             self.apply_liquid();
             self.key = None;
         }
+        self.anchor_px = None;
         self.layout_window();
         self.check_covered();
     }
@@ -831,8 +858,21 @@ impl IslandApp {
         self.window_px.0 as f32 / self.ui.scale
     }
 
+    /// Geser pil dari tengah jendela (dp) agar mengikuti posisi pilihan pengguna.
+    fn shift_of(&self, shape: &Shape) -> f32 {
+        let w = self.window_width_dp();
+        let anchor = self.anchor_px.map_or(w / 2.0, |a| (a - self.window_origin.0) as f32 / self.ui.scale);
+        layout::pill_center(anchor, w, shape) - w / 2.0
+    }
+
+    fn main_rect(&self) -> Rect {
+        let mut r = self.shape.main_rect(self.window_width_dp());
+        r.x += self.shift_of(&self.shape);
+        r
+    }
+
     fn pill_local(&self, p: Point) -> Option<Point> {
-        let r = self.shape.main_rect(self.window_width_dp());
+        let r = self.main_rect();
         r.contains(p).then(|| Point::new(p.x - r.x, p.y - r.y))
     }
 
@@ -868,7 +908,7 @@ impl IslandApp {
             self.esc_registered = self.window.register_hotkey(HK_ESC, &esc);
         }
         if self.pointer.seek.is_some() {
-            let pill = self.shape.main_rect(self.window_width_dp());
+            let pill = self.main_rect();
             if let Some(bar) = self.content.as_ref().and_then(|c| c.d.seek.as_ref()).map(|s| s.rect) {
                 let frac = layout::seek_fraction(bar, p.x - pill.x);
                 self.pointer.seek = Some(frac);
@@ -877,7 +917,16 @@ impl IslandApp {
         }
         if let Some(down) = self.pointer.down {
             let dx = p.x - down.x;
-            if !self.pointer.consumed && dx.abs() > SWIPE_DP {
+            if self.dragging {
+                self.drag_to();
+            } else if !self.pointer.consumed && !self.island.is_expanded() && self.drag.is_some() && dx.abs() > DRAG_DP {
+                // Seret pil yang tertutup ke kiri/kanan untuk memindahkannya di sepanjang tepi atas.
+                self.pointer.consumed = true;
+                self.window.kill_timer(T_LONG_PRESS);
+                self.release_button();
+                self.dragging = true;
+                self.drag_to();
+            } else if !self.pointer.consumed && dx.abs() > SWIPE_DP {
                 self.pointer.consumed = true;
                 self.release_button();
                 self.swipe(if dx > 0.0 { -1 } else { 1 });
@@ -888,7 +937,43 @@ impl IslandApp {
         }
     }
 
+    fn drag_to(&mut self) {
+        let (Some((c0, a0)), Some(c)) = (self.drag, cursor_pos()) else { return };
+        let mon = primary_monitor();
+        let a = (a0 + c.0 - c0).clamp(mon.left, mon.right);
+        if self.anchor_px != Some(a) {
+            self.anchor_px = Some(a);
+            self.layout_window();
+        }
+    }
+
+    fn finish_drag(&mut self) {
+        self.dragging = false;
+        self.drag = None;
+        let mon = primary_monitor();
+        let x = (self.anchor(&mon) - mon.left) as f32 / mon.width().max(1) as f32;
+        let x = (x.clamp(0.0, 1.0) * 10_000.0).round() / 10_000.0;
+        self.cfg.island.x = x;
+        self.island.set_idle_pinned(self.side_buddy());
+        self.persist_x(x);
+        self.key = None;
+        self.check_covered();
+        self.update();
+        let s = self.ui.scale;
+        let over = cursor_pos().is_some_and(|(cx, cy)| {
+            let p = Point::new((cx - self.window_origin.0) as f32 / s, (cy - self.window_origin.1) as f32 / s);
+            self.region.contains(p)
+        });
+        if !over {
+            self.on_mouse_leave();
+        }
+    }
+
     fn on_mouse_leave(&mut self) {
+        if self.dragging {
+            // Selama diseret tetikus ditangkap; drag selesai saat tombol dilepas.
+            return;
+        }
         self.inside = false;
         self.reveal_pending = false;
         self.reveal_anchor = None;
@@ -929,6 +1014,8 @@ impl IslandApp {
             return;
         }
         self.pointer = Pointer { down: Some(p), consumed: false, seek: None };
+        let mon = primary_monitor();
+        self.drag = cursor_pos().map(|c| (c.0, self.anchor(&mon)));
         self.window.set_timer(T_LONG_PRESS, LONG_PRESS_MS);
         let hit = self.button_at(p);
         if let Some(b) = hit.filter(|b| *b != Button::Mascot) {
@@ -1089,6 +1176,12 @@ impl IslandApp {
             }
             return;
         }
+        if self.dragging {
+            self.pointer = Pointer::default();
+            self.finish_drag();
+            return;
+        }
+        self.drag = None;
         if let Some(frac) = self.pointer.seek {
             self.pointer = Pointer::default();
             self.commit_seek(frac, now);
@@ -1347,6 +1440,8 @@ impl IslandApp {
             Event::MouseDown(p, MouseButton::Left) => s.pointer_down(p).map(|_| None),
             Event::MouseUp(p, MouseButton::Left) => s.pointer_up(p),
             Event::DpiChanged(_) => s.rescale(&self.cfg).map(|_| None),
+            Event::Resized => s.resize().map(|_| None),
+            Event::Wheel(d) => s.wheel(d).map(|_| None),
             Event::Close | Event::Key(VK_ESCAPE) => {
                 self.close_settings();
                 return;
@@ -1369,7 +1464,7 @@ impl IslandApp {
             Setting::Fullscreen => self.persist("island", "hide_in_fullscreen", flag(on)),
             Setting::AvoidWindows => self.persist("island", "avoid_windows", flag(on)),
             Setting::SideMascot => self.persist("island", "side_mascot", flag(on)),
-            Setting::Position => self.persist("island", "position", &quoted(Placement::ALL[i.min(2)].key())),
+            Setting::Position => self.persist_x(Placement::ALL[i.min(2)].x()),
             Setting::HoverZone => self.persist("island", "hover_zone", &quoted(HoverZone::ALL[i.min(1)].key())),
             Setting::Style => self.persist("appearance", "style", &quoted(Style::ALL[i.min(2)].key())),
             Setting::Reduce => self.persist("motion", "reduce", &quoted(["system", "on", "off"][i.min(2)])),
@@ -1437,7 +1532,7 @@ impl IslandApp {
 
     fn side_buddy(&self) -> bool {
         let c = &self.cfg;
-        c.island.position != Placement::Center && c.island.side_mascot && c.mascot.enabled
+        layout::is_side(c.island.x) && c.island.side_mascot && c.mascot.enabled
     }
 
     /// Mata maskot mengikuti kursor di mana pun di layar, tidak hanya saat kursor di atas pil.
@@ -1467,7 +1562,7 @@ impl IslandApp {
         self.gaze_last = Some(pos);
         let s = self.ui.scale;
         let p = Point::new((pos.0 - self.window_origin.0) as f32 / s, (pos.1 - self.window_origin.1) as f32 / s);
-        let r = self.shape.main_rect(self.window_width_dp());
+        let r = self.main_rect();
         let Some(m) = self.content.as_mut().and_then(|c| c.d.mascot.as_mut()) else { return };
         let c = m.center();
         let (vx, vy) = (p.x - r.x - c.x, p.y - r.y - c.y);
@@ -1805,10 +1900,12 @@ impl IslandApp {
     fn morph(&mut self, shape: Shape, p: SpringPreset) -> Result<()> {
         self.morph_seq += 1;
         self.settled_region = self.region_of(shape);
-        let moving = layout::union(layout::hit_box(&[shape]), self.settled_region);
-        self.set_region(layout::union(self.region, moving));
+        let moving = rect_union(self.centered(layout::hit_box(&[shape]), &shape), self.settled_region);
+        self.set_region(rect_union(self.region, moving));
+        let shift = self.shift_of(&shape);
         let a = &self.ui.anim;
         let batch = a.batch()?;
+        a.spring(&self.stage, "Offset.X", shift * self.ui.scale, p)?;
         let main = &self.main.visual;
         a.spring(main, "Size.X", shape.main.w, p)?;
         a.spring(main, "Size.Y", shape.main.h, p)?;
@@ -1892,20 +1989,25 @@ impl IslandApp {
         let _ = self.bubble.set_liquid(&self.ui, on);
     }
 
-    fn region_of(&self, shape: Shape) -> Size {
-        let near = layout::near_zone(&self.full_shape, self.cfg.island.hover_zone);
+    fn centered(&self, size: Size, shape: &Shape) -> Rect {
+        let cx = self.window_width_dp() / 2.0 + self.shift_of(shape);
+        Rect::new(cx - size.w / 2.0, 0.0, size.w, size.h)
+    }
+
+    fn region_of(&self, shape: Shape) -> Rect {
+        let near = self.centered(layout::near_zone(&self.full_shape, self.cfg.island.hover_zone), &shape);
         if self.retracted {
             near
         } else if self.island.tucks() {
-            layout::union(layout::rest_box(&shape), near)
+            rect_union(self.centered(layout::rest_box(&shape), &shape), near)
         } else {
-            layout::rest_box(&shape)
+            self.centered(layout::rest_box(&shape), &shape)
         }
     }
 
-    fn set_region(&mut self, size: Size) {
-        if size != self.region {
-            self.region = size;
+    fn set_region(&mut self, r: Rect) {
+        if r != self.region {
+            self.region = r;
             self.apply_region();
         }
     }
@@ -1913,9 +2015,17 @@ impl IslandApp {
     fn apply_region(&self) {
         let s = self.ui.scale;
         let pad = if self.fx.is_empty() { 0.0 } else { FX_PAD };
-        let w = (((self.region.w + 2.0 * pad) * s).ceil() as i32).min(self.window_px.0);
-        let h = (((self.region.h + pad) * s).ceil() as i32).min(self.window_px.1);
-        self.window.set_region((self.window_px.0 - w) / 2, 0, w, h);
+        let (ww, wh) = self.window_px;
+        let x0 = (((self.region.x - pad) * s).floor() as i32).clamp(0, ww);
+        let x1 = (((self.region.x + self.region.w + pad) * s).ceil() as i32).clamp(x0, ww);
+        let h = (((self.region.h + pad) * s).ceil() as i32).min(wh);
+        self.window.set_region(x0, 0, x1 - x0, h);
+    }
+
+    /// Titik tengah pil yang diinginkan, dalam piksel layar.
+    fn anchor(&self, mon: &Monitor) -> i32 {
+        let a = self.anchor_px.unwrap_or_else(|| layout::anchor_px(self.cfg.island.x, mon.left, mon.width()));
+        a.clamp(mon.left, mon.right)
     }
 
     fn window_bounds(&self, mon: &Monitor) -> (i32, i32, i32) {
@@ -1923,7 +2033,7 @@ impl IslandApp {
         let w = (size.w * self.ui.scale).ceil() as i32;
         let h = (size.h * self.ui.scale).ceil() as i32;
         let w = w + (mon.width() - w).rem_euclid(2);
-        (self.cfg.island.position.window_x(mon.left, mon.width(), w), w, h)
+        (layout::window_left(self.anchor(mon), mon.left, mon.width(), w), w, h)
     }
 
     fn layout_window(&mut self) {
@@ -1931,7 +2041,13 @@ impl IslandApp {
         let (x, w, h) = self.window_bounds(&mon);
         self.window_px = (w, h);
         self.window_origin = (x, mon.top);
+        self.anchor_px = Some(self.anchor(&mon));
         self.window.set_bounds(x, mon.top, w, h, false);
+        let shift = self.shift_of(&self.shape);
+        let _ = self.ui.anim.stop(&self.stage, "Offset.X");
+        let _ = self.stage.SetOffset(v3(shift * self.ui.scale, 0.0, 0.0));
+        self.settled_region = self.region_of(self.shape);
+        self.region = self.settled_region;
         self.apply_region();
     }
 

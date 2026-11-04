@@ -6,7 +6,7 @@ use notchi_core::mascot::Expression;
 use notchi_core::spring::SpringPreset;
 use notchi_core::theme::Style;
 use notchi_platform_win::Result;
-use notchi_platform_win::comp::{CompositionHost, ContainerVisual, ShapeVisual, v2, v3};
+use notchi_platform_win::comp::{CompositionHost, ContainerVisual, ShapeVisual, SpriteVisual, color, v2, v3};
 use notchi_platform_win::gfx::{TextStyle, Weight};
 use notchi_platform_win::window::{Event, IconImage, OwnedWindow, UiProxy, create_panel};
 
@@ -27,6 +27,7 @@ const TOP: f32 = 82.0;
 const TRACK_W: f32 = 44.0;
 const TRACK_H: f32 = 26.0;
 const KNOB: f32 = 20.0;
+const WHEEL_STEP: f32 = 64.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
@@ -63,7 +64,7 @@ pub fn value(cfg: &Config, s: Setting) -> usize {
         Setting::Liquid => cfg.liquid as usize,
         Setting::Fullscreen => cfg.island.hide_in_fullscreen as usize,
         Setting::AvoidWindows => cfg.island.avoid_windows as usize,
-        Setting::Position => cfg.island.position.index(),
+        Setting::Position => notchi_core::layout::Placement::nearest(cfg.island.x).index(),
         Setting::SideMascot => cfg.island.side_mascot as usize,
         Setting::HoverZone => cfg.island.hover_zone.index(),
         Setting::Style => cfg.style.index(),
@@ -120,7 +121,11 @@ pub struct Settings {
     hotkey: String,
     proxy: UiProxy,
     ui: Ui,
+    bg: SpriteVisual,
     stage: ContainerVisual,
+    zoom: f32,
+    offset_x: f32,
+    scroll: f32,
     _host: CompositionHost,
     window: OwnedWindow,
 }
@@ -155,8 +160,12 @@ impl Settings {
         window.set_handler(move |_, ev| fwd.post(Event::Panel(Box::new(ev))));
         let host = CompositionHost::attach(&base.c, &w)?;
         let ui = base.fork(scale_for_dpi(w.dpi()));
+        // Latar memenuhi seluruh jendela, berapa pun ukurannya.
+        let bg = ui.c.CreateSpriteVisual()?;
+        bg.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
+        bg.SetBrush(&ui.c.CreateColorBrushWithColor(color(ui.pal.base))?)?;
+        host.root.Children()?.InsertAtTop(&bg)?;
         let stage = ui.container(&host.root)?;
-        stage.SetScale(v3(ui.scale, ui.scale, 1.0))?;
         let mut s = Settings {
             controls: Vec::new(),
             desc: None,
@@ -169,7 +178,11 @@ impl Settings {
             hotkey,
             proxy: proxy.clone(),
             ui,
+            bg,
             stage,
+            zoom: 1.0,
+            offset_x: 0.0,
+            scroll: 0.0,
             _host: host,
             window,
         };
@@ -189,8 +202,34 @@ impl Settings {
 
     pub fn rescale(&mut self, cfg: &Config) -> Result<()> {
         self.ui.scale = scale_for_dpi(self.window.window().dpi());
-        self.stage.SetScale(v3(self.ui.scale, self.ui.scale, 1.0))?;
         self.build(cfg)
+    }
+
+    /// Jendela bisa diubah ukurannya: isi menyusut bila jendela lebih sempit dari tata letak,
+    /// berada di tengah bila lebih lebar, dan bisa di-scroll bila lebih pendek.
+    pub fn resize(&mut self) -> Result<()> {
+        let (cw, ch) = self.window.window().client_px();
+        let s = self.ui.scale;
+        let (w, h) = (cw as f32 / s, ch as f32 / s);
+        if w < 1.0 || h < 1.0 {
+            return Ok(());
+        }
+        self.zoom = (w / SIZE.0).min(1.0);
+        self.offset_x = ((w - SIZE.0 * self.zoom) / 2.0).max(0.0);
+        let range = (SIZE.1 * self.zoom - h).max(0.0);
+        self.scroll = self.scroll.clamp(0.0, range);
+        let z = s * self.zoom;
+        self.stage.SetScale(v3(z, z, 1.0))?;
+        self.stage.SetOffset(v3(self.offset_x * s, -self.scroll * s, 0.0))
+    }
+
+    pub fn wheel(&mut self, delta: i32) -> Result<()> {
+        self.scroll -= delta as f32 / 120.0 * WHEEL_STEP;
+        self.resize()
+    }
+
+    fn to_content(&self, p: Point) -> Point {
+        Point::new((p.x - self.offset_x) / self.zoom, (p.y + self.scroll) / self.zoom)
     }
 
     fn look_of(&self, cfg: &Config) -> Look {
@@ -258,6 +297,7 @@ impl Settings {
         let ui = self.ui.fork(self.ui.scale);
         let pal = ui.pal;
         let stage = self.stage.clone();
+        self.bg.SetBrush(&ui.c.CreateColorBrushWithColor(color(pal.base))?)?;
         ui.bar(&stage, Rect::new(0.0, 0.0, SIZE.0, SIZE.1), pal.base)?;
 
         let mrect = Rect::new(M, 18.0, 42.0, 42.0);
@@ -366,6 +406,7 @@ impl Settings {
         self.controls.push(Control { setting: Setting::Advanced, hit: vec![b], kind: Kind::Button { host } });
 
         self.look = Some(self.look_of(cfg));
+        self.resize()?;
         Ok(())
     }
 
@@ -539,6 +580,7 @@ impl Settings {
     }
 
     pub fn pointer_move(&mut self, p: Option<Point>) -> Result<()> {
+        let p = p.map(|p| self.to_content(p));
         if let Some(m) = &mut self.mascot {
             let c = m.center();
             match p {
@@ -561,6 +603,7 @@ impl Settings {
     }
 
     pub fn pointer_down(&mut self, p: Point) -> Result<()> {
+        let p = self.to_content(p);
         self.pressed = self.hit(p);
         if let Some(h) = self.pressed {
             self.press_visual(h, true)?;
@@ -569,6 +612,7 @@ impl Settings {
     }
 
     pub fn pointer_up(&mut self, p: Point) -> Result<Option<Action>> {
+        let p = self.to_content(p);
         let Some(pressed) = self.pressed.take() else { return Ok(None) };
         self.press_visual(pressed, false)?;
         if self.hit(p) != Some(pressed) {
