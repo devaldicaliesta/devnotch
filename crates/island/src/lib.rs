@@ -1888,7 +1888,9 @@ impl IslandApp {
         match pres {
             Presentation::Hidden => ViewKind::Hidden,
             Presentation::Idle if glance => ViewKind::Peek(PeekKind::Idle),
-            Presentation::Idle if self.side_buddy() => ViewKind::Buddy,
+            // Tanpa aktivitas, pil kosong diganti pil kecil berisi maskot (di mana pun letaknya).
+            // `side_buddy` hanya menentukan apakah pil itu tetap tampil (tidak masuk ke tepi).
+            Presentation::Idle if self.cfg.mascot.enabled => ViewKind::Buddy,
             Presentation::Idle => ViewKind::Empty,
             Presentation::Compact if glance && ordered[0] == ActivityKind::Media => ViewKind::Peek(PeekKind::Media),
             Presentation::Compact => ViewKind::Compact(slot_of(ordered[0])),

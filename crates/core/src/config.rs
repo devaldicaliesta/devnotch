@@ -161,8 +161,9 @@ x = 0.5
 #   "small"   selebar bibir, setipis 2 dp, kursor harus diam 0,4 detik.
 #   "normal"  selebar pil, 4 dp, ditahan 0,2 detik.
 hover_zone = "small"
-# Saat pil berada di samping (x di bawah 0.3 atau di atas 0.7) dan tidak ada aktivitas, tampilkan maskot kecil
-# yang menemani di tepi atas (tidak masuk ke tepi). Matanya mengikuti kursor.
+# Tanpa aktivitas, Island tampil sebagai pil kecil berisi maskot (bila maskot aktif); matanya
+# mengikuti kursor. Bila true dan pil berada di samping (x di bawah 0.3 atau di atas 0.7),
+# pil maskot itu tetap terlihat dan tidak masuk ke tepi.
 side_mascot = true
 
 [appearance]
