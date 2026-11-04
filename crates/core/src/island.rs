@@ -163,10 +163,9 @@ impl Island {
         if self.fullscreen || self.snoozed_until.is_some_and(|t| now < t) {
             return Presentation::Hidden;
         }
-        if let Some(a) = &self.alert
-            && now < a.until {
-                return Presentation::Alert(a.kind.clone());
-            }
+        if let Some(a) = self.shown_alert(now) {
+            return Presentation::Alert(a.clone());
+        }
         if self.expanded {
             return Presentation::Expanded;
         }
@@ -204,7 +203,7 @@ impl Island {
     }
 
     pub fn click(&mut self, now: Ms) {
-        if self.alert_active(now) {
+        if self.shown_alert(now).is_some() {
             self.alert = None;
             self.expanded = true;
         } else {
@@ -253,8 +252,11 @@ impl Island {
         self.alert = None;
     }
 
-    fn alert_active(&self, now: Ms) -> bool {
-        self.alert.as_ref().is_some_and(|a| now < a.until)
+    /// Alert yang benar-benar tampil. HUD volume tidak menimpa kartu yang sedang terbuka:
+    /// tanpa ini, scroll di atas kartu mengecilkannya menjadi HUD, kursor keluar dari pil,
+    /// lalu kartu ikut tertutup.
+    fn shown_alert(&self, now: Ms) -> Option<&AlertKind> {
+        self.alert.as_ref().filter(|a| now < a.until && !(self.expanded && a.kind.is_hud())).map(|a| &a.kind)
     }
 
     pub fn tick(&mut self, now: Ms) -> bool {
@@ -345,6 +347,23 @@ mod tests {
         assert!(!i.push_alert(AlertKind::Volume { level: 30, muted: false }, 100));
         assert!(i.push_alert(charging(), 200));
         assert!(i.push_alert(AlertKind::Volume { level: 30, muted: false }, 10_000));
+    }
+
+    #[test]
+    fn hud_volume_tidak_menutup_kartu() {
+        let mut i = Island::new(Behavior::Sticky);
+        i.set_activity_count(1);
+        i.click(0);
+        assert!(i.push_alert(AlertKind::Volume { level: 40, muted: false }, 10));
+        assert_eq!(i.presentation(20), Presentation::Expanded, "kartu tetap terbuka saat volume diubah");
+        i.click(30);
+        assert!(!i.is_expanded(), "klik tetap menutup kartu, bukan menelan alert");
+        assert_eq!(
+            i.presentation(40),
+            Presentation::Alert(AlertKind::Volume { level: 40, muted: false }),
+            "HUD tampil setelah kartu ditutup"
+        );
+        assert_eq!(i.presentation(2_000), Presentation::Compact);
     }
 
     #[test]

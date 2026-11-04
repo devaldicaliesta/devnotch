@@ -32,6 +32,25 @@ pub fn animations_enabled() -> bool {
     !ok || on.as_bool()
 }
 
+/// Windows memakai tema terang untuk aplikasi (Pengaturan → Personalisasi → Warna).
+pub fn apps_use_light_theme() -> bool {
+    use windows::Win32::System::Registry::{RRF_RT_REG_DWORD, RegGetValueW};
+    let mut value = 0u32;
+    let mut size = size_of::<u32>() as u32;
+    let r = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut _),
+            Some(&mut size),
+        )
+    };
+    r == ERROR_SUCCESS && value != 0
+}
+
 pub fn high_contrast() -> bool {
     let mut hc = HIGHCONTRASTW { cbSize: size_of::<HIGHCONTRASTW>() as u32, ..Default::default() };
     let ok = unsafe {
